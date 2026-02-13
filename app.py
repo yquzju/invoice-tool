@@ -12,8 +12,7 @@ API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg"  # <--- 请务必填入你�
 
 def get_available_model_url():
     """
-    自动侦测当前 API Key 可用的模型
-    不再盲猜名字，而是直接问服务器
+    自动侦测模型 (强制优先锁定 1.5 稳定版)
     """
     try:
         # 1. 获取模型列表
@@ -21,24 +20,46 @@ def get_available_model_url():
         response = requests.get(list_url)
         
         if response.status_code != 200:
-            st.error(f"无法获取模型列表，请检查 API Key 是否正确。错误代码: {response.status_code}")
-            return None
+            st.error(f"无法获取模型列表，请检查 API Key。Status: {response.status_code}")
+            return None, None
 
         models = response.json().get('models', [])
-        
-        # 2. 筛选出支持生成内容 (generateContent) 的模型
-        candidates = []
-        for m in models:
-            methods = m.get('supportedGenerationMethods', [])
-            name = m.get('name', '')
-            if 'generateContent' in methods:
-                # 排除一些不需要的视觉模型或旧模型
-                if 'vision' not in name and 'embedding' not in name:
-                    candidates.append(name)
+        candidates = [m['name'] for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
         
         if not candidates:
-            st.error("未找到任何可用模型！")
-            return None
+            st.error("未找到可用模型")
+            return None, None
+
+        # === 🛑 核心修改在这里 ===
+        # 以前是“找最新的”，现在改为“找最稳的”
+        selected_model = None
+        
+        # 优先级 1: 精确寻找 1.5 Flash (最快、最稳、免费额度高)
+        for name in candidates:
+            if 'gemini-1.5-flash' in name and 'latest' not in name and '8b' not in name:
+                selected_model = name
+                break
+        
+        # 优先级 2: 如果找不到 Flash，找 1.5 Pro
+        if not selected_model:
+            for name in candidates:
+                if 'gemini-1.5-pro' in name and 'latest' not in name:
+                    selected_model = name
+                    break
+        
+        # 优先级 3: 实在没办法了，才用列表里的第一个（可能是 2.0 或 2.5）
+        if not selected_model:
+            selected_model = candidates[0]
+
+        # 构建 URL
+        clean_name = selected_model.replace("models/", "")
+        final_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_name}:generateContent?key={API_KEY}"
+        
+        return final_url, clean_name
+
+    except Exception as e:
+        st.error(f"自动寻址失败: {e}")
+        return None, None
 
         # 3. 智能优选：优先找 flash，其次找 pro，最后随便拿一个
         selected_model = candidates[0] # 默认拿第一个
