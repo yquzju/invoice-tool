@@ -20,51 +20,44 @@ CANDIDATE_MODELS = [
 
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-# --- 注入 CSS 实现高级感 UI 和按钮居中 ---
+# --- 注入 CSS 实现高级感 UI 与右侧同行布局 ---
 st.markdown("""
     <style>
-    /* 定制下载按钮样式：高级蓝色 */
+    /* 1. 定制下载按钮样式：高级蓝色 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.6rem 2.5rem !important;
+        padding: 0.5rem 1.5rem !important;
         border-radius: 8px !important;
         transition: all 0.3s ease;
         font-weight: 500 !important;
-        width: 100%; /* 让按钮填满列宽以实现视觉居中 */
+        width: auto !important; /* 宽度自适应 */
     }
     div.stDownloadButton > button:hover {
         background-color: #0056b3 !important;
-        box-shadow: 0 4px 15px rgba(0,123,255,0.3) !important;
-        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
     }
     
-    /* 1. 修改统计区域：去掉白底框 [对应截图1修改] */
-    .summary-section {
+    /* 2. 同行对齐容器：确保金额和按钮在视觉中线对齐 */
+    .alignment-container {
         display: flex;
-        flex-direction: column;
-        align-items: center; 
-        margin-top: 20px;
-        padding: 10px;
-        background-color: transparent !important; /* 去掉底色 */
-        border: none !important;                 /* 去掉边框 */
-        box-shadow: none !important;              /* 去掉阴影 */
+        align-items: center; /* 垂直居中对齐 */
+        justify-content: flex-end; /* 水平靠右对齐 */
+        gap: 20px; /* 文案与按钮的间距 */
+        margin-top: 10px;
     }
-    
-    .total-amount-wrapper {
-        display: flex;
-        align-items: baseline;
-        gap: 12px;
-    }
-    .total-label {
+
+    .total-label-inline {
         font-size: 1.1rem;
         color: #6C757D;
+        white-space: nowrap;
     }
-    .total-value {
-        font-size: 2rem;
+    .total-value-inline {
+        font-size: 1.8rem;
         font-weight: 700;
         color: #212529;
+        white-space: nowrap;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -153,31 +146,39 @@ if uploaded_files:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        # --- 🟢 居中统计区域 (已去掉背景框) ---
-        total = edited_df['金额'].sum()
-        st.markdown(f"""
-            <div class="summary-section">
-                <div class="total-amount-wrapper">
-                    <span class="total-label">💰 总金额合计</span>
-                    <span class="total-value">¥ {total:,.2f}</span>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
+        # --- 🟢 核心修改：同行布局 [金额 + 按钮 靠右] ---
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        # 导出 Excel 逻辑
+        # 准备导出 Excel 逻辑 (需放在布局前以便按钮调用)
+        total = edited_df['金额'].sum()
         df_export = edited_df.drop(columns=["file_id"])
         df_export.loc[len(df_export)] = ['合计', '', '', total]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
         
-        # --- 🟢 2. 下载按钮左右居中 [对应截图2修改] ---
-        # 使用 3 列布局，将按钮放在中间一列来实现居中
-        col_side1, col_center, col_side2 = st.columns([4, 2, 4])
-        with col_center:
-            st.download_button(
-                label="📥 下载 excel", 
-                data=output.getvalue(), 
-                file_name="发票汇总.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # 创建布局：左侧 70% 留空，右侧 30% 放置内容
+        col_left, col_right = st.columns([7, 3])
+        
+        with col_right:
+            # 使用 Flex 布局让金额文案和下载按钮在同一行
+            # 我们通过 st.container + 内部两列或直接 HTML 来精细控制
+            inner_col1, inner_col2 = st.columns([1.2, 1])
+            
+            with inner_col1:
+                # 渲染总金额文本
+                st.markdown(f"""
+                    <div style="text-align: right; line-height: 1.2;">
+                        <span class="total-label-inline">💰 总计金额</span><br>
+                        <span class="total-value-inline">¥ {total:,.2f}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with inner_col2:
+                # 渲染下载按钮
+                st.download_button(
+                    label="📥 下载 excel", 
+                    data=output.getvalue(), 
+                    file_name="发票汇总.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
