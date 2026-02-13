@@ -5,18 +5,25 @@ import base64
 import json
 import io
 from pdf2image import convert_from_bytes
+import time
 
-# --- ⚠️ 必填: 你的 SiliconFlow Key (sk-开头) ---
+# --- ⚠️ 填入你的 SiliconFlow Key ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" 
 
-# --- 核心修改：换用 InternVL2-26B (书生·浦语) ---
-# 这是一个 260亿参数的强力视觉模型，中文 OCR 能力极强，且通常在 SiliconFlow 上可用
-MODEL_NAME = "OpenGVLab/InternVL2-26B" 
+# --- 备选模型名单 (按优先级排序) ---
+# 既然 72B 贵、InternVL 关了，我们只试那些便宜且大概率在线的
+CANDIDATE_MODELS = [
+    "Qwen/Qwen2-VL-7B-Instruct",        # 首选：Qwen 7B (极便宜/免费，稳)
+    "deepseek-ai/deepseek-vl-7b-chat",  # 备选：DeepSeek VL (备用)
+    "TeleAI/TeleMM",                    # 备选：TeleMM (备用)
+    "Qwen/Qwen2-VL-72B-Instruct"        #以此垫底：万一你有钱了，它也能跑
+]
+
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-def analyze_image_internvl(image_bytes, mime_type):
+def analyze_image_auto_switch(image_bytes, mime_type):
     """
-    使用 InternVL2 进行识别
+    自动轮询所有可用模型，直到成功
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {
@@ -24,59 +31,67 @@ def analyze_image_internvl(image_bytes, mime_type):
         "Content-Type": "application/json"
     }
     
-    # InternVL 的 Prompt 格式
-    data = {
-        "model": MODEL_NAME,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": "请分析这张发票，提取以下3项信息并以严格JSON格式返回：\n1. Item (发票项目名称)\n2. Date (开票日期 YYYY-MM-DD)\n3. Total (价税合计，纯数字)\n\n示例格式：{\"Item\": \"办公用品\", \"Date\": \"2023-01-01\", \"Total\": 100.00}\n请直接返回JSON，不要包含Markdown标记。"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{base64_image}"
-                        }
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 512,
-        "temperature": 0.1
-    }
+    last_error = ""
 
-    try:
-        response = requests.post(API_URL, headers=headers, json=data, timeout=60)
+    # 循环尝试列表里的每个模型
+    for model_name in CANDIDATE_MODELS:
+        # 显示正在尝试哪个
+        status_msg = st.empty()
+        status_msg.caption(f"🔄 正在尝试连接模型: `{model_name}` ...")
         
-        # 调试用：打印状态码 (你可以看页面右上角的 Running 小人)
-        # print(f"Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            content = response.json()['choices'][0]['message']['content']
-            # 清洗数据
-            clean = content.replace("```json", "").replace("```", "").strip()
-            s = clean.find('{')
-            e = clean.rfind('}') + 1
-            if s != -1 and e != -1:
-                return json.loads(clean[s:e])
-            return json.loads(clean)
-        
-        elif response.status_code == 400:
-            # 如果 InternVL2-26B 也不在，我们尝试备用的 8B 版本
-            raise Exception(f"模型 {MODEL_NAME} 未找到，可能需要切换其他模型。")
-        else:
-            raise Exception(f"API请求失败 {response.status_code}: {response.text}")
+        data = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract invoice data into JSON: 1.Item 2.Date 3.Total. JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                    ]
+                }
+            ],
+            "max_tokens": 512,
+            "temperature": 0.1
+        }
+
+        try:
+            response = requests.post(API_URL, headers=headers, json=data, timeout=30)
             
-    except Exception as e:
-        raise e
+            # === 成功 (200) ===
+            if response.status_code == 200:
+                status_msg.caption(f"✅ 成功连接: `{model_name}`")
+                content = response.json()['choices'][0]['message']['content']
+                clean = content.replace("```json", "").replace("```", "").strip()
+                s = clean.find('{')
+                e = clean.rfind('}') + 1
+                return json.loads(clean[s:e]) if s != -1 else json.loads(clean)
+            
+            # === 余额不足 (403 + insufficient balance) ===
+            elif response.status_code == 403 and "balance" in response.text:
+                status_msg.empty() # 清除尝试信息
+                # 如果 7B 都报余额不足，那就是真的没钱了，直接抛出异常让用户知道
+                if "7B" in model_name: 
+                    raise Exception("💰 您的 SiliconFlow 免费额度已完全耗尽。请注册新账号获取额度，或充值(几块钱可以用很久)。")
+                continue # 换下一个试试
+            
+            # === 模型禁用/不存在 (400/404) ===
+            else:
+                last_error = f"{model_name} 报错: {response.status_code}"
+                status_msg.empty()
+                continue # 换下一个
+
+        except Exception as e:
+            if "免费额度" in str(e): raise e # 如果是余额问题，直接中断
+            last_error = str(e)
+            continue
+            
+    # 如果循环完了都没成功
+    raise Exception(f"所有模型均不可用。最后报错: {last_error}")
 
 # --- 页面逻辑 ---
-st.set_page_config(page_title="发票助手 (InternVL版)", layout="wide")
-st.title("🧾 AI 发票助手 (InternVL2-26B 版)")
-st.info(f"当前使用模型：`{MODEL_NAME}` (中文 OCR 强力模型)")
+st.set_page_config(page_title="发票助手 (扫货版)", layout="wide")
+st.title("🧾 AI 发票助手 (自动扫货版)")
+st.info("💡 自动在 Qwen-7B / DeepSeek 等模型中寻找可用的免费/低价通道。")
 
 uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
@@ -86,9 +101,6 @@ if uploaded_files:
     progress_bar = st.progress(0)
     
     for index, file in enumerate(uploaded_files):
-        status_text = st.empty()
-        status_text.text(f"正在识别: {file.name} ...")
-        
         try:
             # 预处理
             file_bytes = file.read()
@@ -104,8 +116,8 @@ if uploaded_files:
                     mime_type = "image/jpeg"
             if mime_type == 'image/jpg': mime_type = 'image/jpeg'
 
-            # 调用
-            result = analyze_image_internvl(process_bytes, mime_type)
+            # 调用自动切换函数
+            result = analyze_image_auto_switch(process_bytes, mime_type)
             
             if result:
                 try:
@@ -124,17 +136,18 @@ if uploaded_files:
             
         except Exception as e:
             st.error(f"❌ {file.name} 失败: {e}")
+            # 如果是余额不足，直接停止后续处理，别浪费时间了
+            if "额度" in str(e):
+                st.stop()
         
         progress_bar.progress((index + 1) / len(uploaded_files))
 
     # 结果展示
     if data_list:
-        status_text.text("处理完毕！")
         df = pd.DataFrame(data_list)
         st.dataframe(df, use_container_width=True)
         st.metric("💰 总金额", f"¥ {df['金额'].sum():,.2f}")
         
-        # 导出 Excel
         df.loc[len(df)] = ['合计', '', '', df['金额'].sum()]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
