@@ -18,51 +18,64 @@ CANDIDATE_MODELS = [
     "TeleAI/TeleMM"
 ]
 
-API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+API_URL = "https://api.siliconflow.cn/v1/chat/completics"
 
-# --- 注入自定义 CSS 以实现高级感 UI 和元素对齐 ---
+# --- 注入 CSS 实现整体居中布局与高级 UI ---
 st.markdown("""
     <style>
-    /* 定制下载按钮样式：高级蓝色 */
+    /* 全局背景优化 */
+    .stApp {
+        background-color: #F8F9FA;
+    }
+
+    /* 定制下载按钮：居中、高级蓝、宽度适中 */
+    div.stDownloadButton {
+        display: flex;
+        justify-content: center; /* 核心：按钮水平居中 */
+        margin-top: 10px;
+    }
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.6rem 2rem !important;
-        border-radius: 8px !important;
-        transition: all 0.3s ease;
-        min-width: 160px !important;
-        max-width: 220px !important;
+        padding: 0.7rem 3rem !important;
+        border-radius: 50px !important; /* 圆角矩形更显高级 */
         font-weight: 500 !important;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,123,255,0.2) !important;
     }
     div.stDownloadButton > button:hover {
         background-color: #0056b3 !important;
-        box-shadow: 0 4px 15px rgba(0,123,255,0.3) !important;
-        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(0,123,255,0.3) !important;
+        transform: translateY(-2px);
     }
     
-    /* 统计区域对齐容器 */
-    .summary-container {
+    /* 统计区域：居中排列 */
+    .summary-section {
         display: flex;
         flex-direction: column;
-        align-items: flex-end; /* 强制所有内容向右靠齐 */
-        gap: 12px;
-        margin-top: 10px;
+        align-items: center; /* 核心：内容水平居中 */
+        margin-top: 30px;
+        padding: 20px;
+        background-color: white;
+        border-radius: 12px;
+        border: 1px solid #E9ECEF;
     }
     
-    /* 总金额文本样式：实现文案与数字同行 */
-    .total-amount-text {
-        font-size: 1.1rem;
-        color: #31333F;
-        font-family: sans-serif;
+    .total-amount-wrapper {
         display: flex;
         align-items: baseline;
-        gap: 8px;
+        gap: 12px;
+        margin-bottom: 5px;
     }
-    .total-amount-value {
-        font-size: 1.6rem;
+    .total-label {
+        font-size: 1.1rem;
+        color: #6C757D;
+    }
+    .total-value {
+        font-size: 2rem;
         font-weight: 700;
-        color: #1E1E1E;
+        color: #212529;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -104,7 +117,7 @@ st.title("🧾 AI 发票助手 (QwenVL 可编辑版)")
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
 if 'ignored_files' not in st.session_state: st.session_state.ignored_files = set()
 
-uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
+uploaded_files = st.file_uploader("请上传发票文件", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
 if uploaded_files:
     st.divider()
@@ -151,36 +164,30 @@ if uploaded_files:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        # --- 🟢 优化后的右下角统计区域布局 ---
-        st.markdown("<br>", unsafe_allow_html=True)
+        # --- 🟢 重新设计的居中统计与下载区域 ---
+        total = edited_df['金额'].sum()
         
-        # 调整列比例，将统计区域压缩在右侧
-        col_left, col_right = st.columns([7.5, 2.5])
-        
-        with col_right:
-            total = edited_df['金额'].sum()
-            
-            # 使用 HTML 替代 st.metric 解决错位和同行问题
-            st.markdown(f"""
-                <div class="summary-container">
-                    <div class="total-amount-text">
-                        <span>💰 总金额合计</span>
-                        <span class="total-amount-value">¥ {total:,.2f}</span>
-                    </div>
+        # 居中显示总金额
+        st.markdown(f"""
+            <div class="summary-section">
+                <div class="total-amount-wrapper">
+                    <span class="total-label">💰 总金额合计</span>
+                    <span class="total-value">¥ {total:,.2f}</span>
                 </div>
-            """, unsafe_allow_html=True)
-            
-            # 导出逻辑
-            df_export = edited_df.drop(columns=["file_id"])
-            df_export.loc[len(df_export)] = ['合计', '', '', total]
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_export.to_excel(writer, index=False)
-            
-            # 下载按钮会自动跟随上面的 summary-container 靠右对齐
-            st.download_button(
-                label="📥 下载 excel", 
-                data=output.getvalue(), 
-                file_name="发票汇总.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # 导出 Excel 逻辑
+        df_export = edited_df.drop(columns=["file_id"])
+        df_export.loc[len(df_export)] = ['合计', '', '', total]
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False)
+        
+        # 居中显示下载按钮 (CSS 控制居中)
+        st.download_button(
+            label="📥 下载 excel", 
+            data=output.getvalue(), 
+            file_name="发票汇总.xlsx", 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
