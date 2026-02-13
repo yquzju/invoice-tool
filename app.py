@@ -295,3 +295,7 @@ with col_btns:
                 file_name="发票汇总.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
+                use_container_width=True
+            )
+        else:
+            st.download_button("📥 下载 Excel", b"", disabled=True, use_container_width=True)
