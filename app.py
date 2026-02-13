@@ -10,7 +10,7 @@ import zipfile
 GOOGLE_API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg" 
 
 genai.configure(api_key=GOOGLE_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-001')
 
 def analyze_image(image_bytes, mime_type):
     """发送图片给 AI 提取数据"""
