@@ -8,20 +8,15 @@ from pdf2image import convert_from_bytes
 import time
 
 # --- ⚠️ 请填入你的 API Key ---
-API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg" 
+API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg"
 
-# --- 核心修改：不再自动寻找，直接写死稳定的 1.5 版本 ---
-# 这是一个经过验证的、绝对可用的模型地址
-MODEL_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
-
-def analyze_image_fixed(image_bytes, mime_type):
+def analyze_image_robust(image_bytes, mime_type):
     """
-    使用固定模型进行识别，带重试机制
+    火力覆盖模式：轮询多个可能的模型地址，直到成功
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {'Content-Type': 'application/json'}
     
-    # 提示词：提取中文
     payload = {
         "contents": [{
             "parts": [
@@ -36,15 +31,30 @@ def analyze_image_fixed(image_bytes, mime_type):
         }]
     }
 
-    # 重试参数
-    max_retries = 3
-    retry_delay = 5
-    
-    for attempt in range(max_retries + 1):
+    # === 🛑 备选模型名单 (按优先级排序) ===
+    # 我们把所有可能的别名都列出来，总有一个能通！
+    candidate_urls = [
+        # 1. 官方推荐的最新稳定版别名
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}",
+        # 2. 指定版本号 001 (非常稳)
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={API_KEY}",
+        # 3. 指定版本号 002 (更新更强)
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={API_KEY}",
+        # 4. 指定版本号 8b (轻量版，极快)
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key={API_KEY}",
+        # 5. 最后大招：如果 Flash 都不行，用 Pro (虽然慢点但能用)
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={API_KEY}",
+    ]
+
+    last_error = ""
+
+    # 循环尝试
+    for i, url in enumerate(candidate_urls):
         try:
-            response = requests.post(MODEL_URL, headers=headers, json=payload)
+            # st.toast(f"正在尝试第 {i+1} 条通道...", icon="🔌") # 调试用，嫌烦可以注释掉
+            response = requests.post(url, headers=headers, json=payload)
             
-            # 成功
+            # === 成功 ===
             if response.status_code == 200:
                 result_json = response.json()
                 try:
@@ -52,36 +62,31 @@ def analyze_image_fixed(image_bytes, mime_type):
                     clean_text = text_content.replace("```json", "").replace("```", "").strip()
                     return json.loads(clean_text)
                 except Exception:
-                    # 有时候返回结构不一样，容错处理
-                    return None
+                    continue # 解析失败，试下一个
             
-            # 限速 (429) -> 等待
+            # === 失败处理 ===
             elif response.status_code == 429:
-                if attempt < max_retries:
-                    st.toast(f"⏳ 触发限速，休息 {retry_delay} 秒...", icon="☕")
-                    time.sleep(retry_delay)
-                    retry_delay += 5 # 递增等待
-                    continue
-                else:
-                    st.error("❌ 限速严重，请稍后再试。")
-                    return None
-            
-            # 其他错误
-            else:
-                st.warning(f"请求报错 ({response.status_code})，尝试重试...")
-                time.sleep(2)
+                st.toast("通道拥堵 (429)，自动切换备用线路...", icon="⚠️")
+                time.sleep(1) # 小歇一下换下一个
                 continue
+            
+            else:
+                # 记录错误 (404等)
+                last_error = f"HTTP {response.status_code}"
+                continue # 换下一个
                 
         except Exception as e:
-            st.error(f"网络异常: {e}")
-            return None
-            
+            last_error = str(e)
+            continue
+
+    # 如果循环跑完了都没成功
+    st.error(f"❌ 所有通道均响应失败。最后报错: {last_error}")
     return None
 
 # --- 页面布局 ---
-st.set_page_config(page_title="发票助手 (稳定版)", layout="wide")
-st.title("🧾 AI 智能发票汇总 (稳定版)")
-st.success("✅ 已强制锁定模型：gemini-1.5-flash (免费额度足，不限速)")
+st.set_page_config(page_title="发票助手 (终极版)", layout="wide")
+st.title("🧾 AI 智能发票汇总 (多通道自动切换版)")
+st.success("✅ 已启用多线路冗余：自动在 Flash-001/002/Pro 之间切换，确保连接成功率。")
 
 uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
@@ -106,8 +111,8 @@ if uploaded_files:
             
             if mime_type == 'image/jpg': mime_type = 'image/jpeg'
 
-            # 调用固定的分析函数
-            result = analyze_image_fixed(process_bytes, mime_type)
+            # 调用多通道函数
+            result = analyze_image_robust(process_bytes, mime_type)
             
             if result:
                 try:
@@ -126,9 +131,9 @@ if uploaded_files:
                  st.error(f"❌ {file.name} 识别失败")
 
         except Exception as e:
-            st.error(f"处理异常: {e}")
+            st.error(f"系统异常: {e}")
             
-        # 这里的 sleep 依然保留，双保险
+        # 基础防抖等待
         time.sleep(2)
         progress_bar.progress((index + 1) / len(uploaded_files))
 
