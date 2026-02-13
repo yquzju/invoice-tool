@@ -20,19 +20,19 @@ CANDIDATE_MODELS = [
 
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-# --- 注入自定义 CSS 以实现高级感 UI ---
+# --- 注入自定义 CSS 以实现高级感 UI 和元素对齐 ---
 st.markdown("""
     <style>
-    /* 定制下载按钮样式：高级蓝色，限制最大宽度 */
+    /* 定制下载按钮样式：高级蓝色 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.6rem 2.5rem !important; /* 增加内边距让按钮更饱满 */
+        padding: 0.6rem 2rem !important;
         border-radius: 8px !important;
         transition: all 0.3s ease;
-        min-width: 180px !important;    /* 设置最小宽度 */
-        max-width: 240px !important;    /* 🟢 限制最大宽度，不再无限拉长 */
+        min-width: 160px !important;
+        max-width: 220px !important;
         font-weight: 500 !important;
     }
     div.stDownloadButton > button:hover {
@@ -40,14 +40,29 @@ st.markdown("""
         box-shadow: 0 4px 15px rgba(0,123,255,0.3) !important;
         transform: translateY(-1px);
     }
-    /* 调整右侧列对齐 */
-    [data-testid="column"]:last-child {
+    
+    /* 统计区域对齐容器 */
+    .summary-container {
         display: flex;
         flex-direction: column;
-        align-items: flex-end; /* 🟢 强制右侧列内容靠右对齐 */
+        align-items: flex-end; /* 强制所有内容向右靠齐 */
+        gap: 12px;
+        margin-top: 10px;
     }
-    [data-testid="stMetric"] {
-        text-align: right;
+    
+    /* 总金额文本样式：实现文案与数字同行 */
+    .total-amount-text {
+        font-size: 1.1rem;
+        color: #31333F;
+        font-family: sans-serif;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+    }
+    .total-amount-value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #1E1E1E;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -106,7 +121,6 @@ if uploaded_files:
                 file_bytes = file.read()
                 m_type = file.type
                 if m_type == "application/pdf":
-                    from pdf2image import convert_from_bytes
                     img = convert_from_bytes(file_bytes)[0]
                     buf = io.BytesIO()
                     img.save(buf, format="JPEG")
@@ -131,29 +145,39 @@ if uploaded_files:
             num_rows="dynamic", use_container_width=True, key="invoice_editor"
         )
         
-        # 同步删除与编辑
+        # 同步删除逻辑
         deleted_ids = set(df["file_id"]) - set(edited_df["file_id"])
         if deleted_ids:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        # --- 🟢 优化后的布局：右下角自适应 ---
+        # --- 🟢 优化后的右下角统计区域布局 ---
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # 调整比例为 8:2，让右侧列更窄，按钮就不会被强制拉得很长
-        col_left, col_right = st.columns([8, 2])
+        # 调整列比例，将统计区域压缩在右侧
+        col_left, col_right = st.columns([7.5, 2.5])
         
         with col_right:
             total = edited_df['金额'].sum()
-            st.metric("总金额合计", f"¥ {total:,.2f}")
             
-            # 下载逻辑
+            # 使用 HTML 替代 st.metric 解决错位和同行问题
+            st.markdown(f"""
+                <div class="summary-container">
+                    <div class="total-amount-text">
+                        <span>💰 总金额合计</span>
+                        <span class="total-amount-value">¥ {total:,.2f}</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # 导出逻辑
             df_export = edited_df.drop(columns=["file_id"])
             df_export.loc[len(df_export)] = ['合计', '', '', total]
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export.to_excel(writer, index=False)
             
+            # 下载按钮会自动跟随上面的 summary-container 靠右对齐
             st.download_button(
                 label="📥 下载 excel", 
                 data=output.getvalue(), 
