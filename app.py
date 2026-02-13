@@ -82,7 +82,7 @@ def analyze_image_auto_switch(image_bytes, mime_type):
     raise Exception(f"所有模型均不可用。最后报错: {last_error}")
 
 # --- 页面逻辑 ---
-st.set_page_config(page_title="发票助手 (最终完美版)", layout="wide")
+st.set_page_config(page_title="发票助手 (QwenVL版)", layout="wide")
 st.title("🧾 AI 发票助手(QwenVL版)")
 
 # 🟢 关键修改 1：初始化“永久记忆”
