@@ -7,39 +7,33 @@ import io
 from pdf2image import convert_from_bytes
 import time
 
-# --- ⚠️ 配置区域 ---
+# --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" 
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 CANDIDATE_MODELS = ["Qwen/Qwen2-VL-72B-Instruct", "Qwen/Qwen2-VL-7B-Instruct"]
 
-# --- 注入 CSS：实现高级感、同行对齐及居中 ---
+# --- 2. 注入 CSS：实现高级感、同行对齐、居中及按钮自适应 ---
 st.markdown("""
     <style>
-    /* 1. 下载按钮：高级蓝、自适应宽度 */
+    /* 下载按钮：高级蓝、完全动态适配文案大小 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.5rem 1.5rem !important;
-        border-radius: 8px !important;
+        padding: 0.5rem 1.2rem !important; /* 精简内边距 */
+        border-radius: 6px !important;
         transition: all 0.3s ease;
         font-weight: 500 !important;
-        width: auto !important;
+        width: auto !important;   /* 核心：宽度随内容变化 */
+        min-width: unset !important; /* 核心：取消最小宽度限制 */
+        display: inline-block !important;
     }
     div.stDownloadButton > button:hover {
         background-color: #0056b3 !important;
-        box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
+        box-shadow: 0 4px 10px rgba(0,123,255,0.25) !important;
     }
 
-    /* 2. 居中容器：处理文案与按钮的垂直对齐 */
-    .center-align-container {
-        display: flex;
-        align-items: center; /* 垂直居中 */
-        justify-content: center; /* 水平居中 */
-        gap: 20px; /* 文案与按钮的间距 */
-        margin-top: 30px;
-        padding-bottom: 50px;
-    }
+    /* 居中对齐容器样式 */
     .total-label {
         font-size: 1.1rem;
         color: #6C757D;
@@ -76,7 +70,7 @@ def analyze_image(image_bytes, mime_type):
         except: continue
     return None
 
-# --- 页面逻辑 ---
+# --- 3. 页面逻辑 ---
 st.set_page_config(page_title="AI 发票助手(QwenVL 版)", layout="wide")
 st.title("🧾 AI 发票助手 (QwenVL 可编辑版)")
 
@@ -120,18 +114,16 @@ if uploaded_files:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        # --- 🟢 核心修改：居中同行布局 ---
+        # --- 🟢 核心修改：文案更新与布局微调 ---
         total = edited_df['金额'].sum()
         
-        # 创建 [3, 4, 3] 布局，将内容集中在中间 40% 的区域
+        # 居中对齐容器
         col_side1, col_main, col_side2 = st.columns([3, 4, 3])
         
         with col_main:
-            # 使用嵌套列进一步微调金额和按钮的水平间距
-            inner_left, inner_right = st.columns([1.5, 1])
+            inner_left, inner_right = st.columns([1.6, 1])
             
             with inner_left:
-                # 渲染总金额文本
                 st.markdown(f"""
                     <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; height: 100%;">
                         <span class="total-label">💰 总计金额</span>
@@ -140,16 +132,15 @@ if uploaded_files:
                 """, unsafe_allow_html=True)
             
             with inner_right:
-                # 渲染导出逻辑与按钮
                 df_export = edited_df.drop(columns=["file_id"])
                 df_export.loc[len(df_export)] = ['合计', '', '', total]
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_export.to_excel(writer, index=False)
                 
-                # 按钮会自动在 inner_right 中左对齐，从而紧跟在金额右边
+                # 更新文案：导出 excel，去掉图标
                 st.download_button(
-                    label="📥 下载 excel", 
+                    label="导出 excel", 
                     data=output.getvalue(), 
                     file_name="发票汇总.xlsx", 
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
