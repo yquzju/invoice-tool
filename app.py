@@ -14,14 +14,15 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 
 def analyze_image(image_bytes, mime_type):
     """发送图片给 AI 提取数据 (新版 SDK 写法)"""
+    # 修改这里的 Prompt 为英文，绕过服务器编码限制
     prompt = """
-    你是一个财务发票识别助手。请分析这张图片，提取以下三个字段：
-    1. 发票项目名称 (Item) - 如果有多个，概括为一个主要项目。
-    2. 开票日期 (Date) - 格式统一为 YYYY-MM-DD。
-    3. 价税合计 (Total) - 纯数字，不要货币符号。
+    Analyze this invoice image and extract 3 fields into strict JSON:
+    1. Item: Main product or service name (keep in original Chinese).
+    2. Date: Invoice date (YYYY-MM-DD).
+    3. Total: Total amount (number only, no currency symbol).
     
-    请严格以 JSON 格式返回，不要包含 ```json 等标记，直接返回大括号内容。
-    格式示例: {"Item": "办公用品", "Date": "2023-10-12", "Total": 100.50}
+    Return only the JSON object, no markdown formatting.
+    Example: {"Item": "办公用品", "Date": "2023-10-12", "Total": 100.50}
     """
     
     try:
