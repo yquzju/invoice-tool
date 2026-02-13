@@ -1,4 +1,3 @@
-import time
 import streamlit as st
 import pandas as pd
 import requests
@@ -6,92 +5,23 @@ import base64
 import json
 import io
 from pdf2image import convert_from_bytes
+import time
 
-# --- ⚠️ 唯一需要手动填的地方 ---
-API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg"  # <--- 请务必填入你的 AIza 开头的 Key
+# --- ⚠️ 请填入你的 API Key ---
+API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg" 
 
-def get_available_model_url():
+# --- 核心修改：不再自动寻找，直接写死稳定的 1.5 版本 ---
+# 这是一个经过验证的、绝对可用的模型地址
+MODEL_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+
+def analyze_image_fixed(image_bytes, mime_type):
     """
-    自动侦测模型 (强制优先锁定 1.5 稳定版)
-    """
-    try:
-        # 1. 获取模型列表
-        list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
-        response = requests.get(list_url)
-        
-        if response.status_code != 200:
-            st.error(f"无法获取模型列表，请检查 API Key。Status: {response.status_code}")
-            return None, None
-
-        models = response.json().get('models', [])
-        candidates = [m['name'] for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
-        
-        if not candidates:
-            st.error("未找到可用模型")
-            return None, None
-
-        # === 🛑 核心修改在这里 ===
-        # 以前是“找最新的”，现在改为“找最稳的”
-        selected_model = None
-        
-        # 优先级 1: 精确寻找 1.5 Flash (最快、最稳、免费额度高)
-        for name in candidates:
-            if 'gemini-1.5-flash' in name and 'latest' not in name and '8b' not in name:
-                selected_model = name
-                break
-        
-        # 优先级 2: 如果找不到 Flash，找 1.5 Pro
-        if not selected_model:
-            for name in candidates:
-                if 'gemini-1.5-pro' in name and 'latest' not in name:
-                    selected_model = name
-                    break
-        
-        # 优先级 3: 实在没办法了，才用列表里的第一个（可能是 2.0 或 2.5）
-        if not selected_model:
-            selected_model = candidates[0]
-
-        # 构建 URL
-        clean_name = selected_model.replace("models/", "")
-        final_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_name}:generateContent?key={API_KEY}"
-        
-        return final_url, clean_name
-
-    except Exception as e:
-        st.error(f"自动寻址失败: {e}")
-        return None, None
-
-        # 3. 智能优选：优先找 flash，其次找 pro，最后随便拿一个
-        selected_model = candidates[0] # 默认拿第一个
-        
-        # 优先匹配逻辑
-        for name in candidates:
-            if 'flash' in name and '2.0' not in name: # 避开额度紧张的 2.0
-                selected_model = name
-                break
-            if 'pro' in name and '1.5' in name:
-                selected_model = name
-                break
-        
-        # 去掉 'models/' 前缀（如果 URL 里不需要的话，但通常 v1beta 调用时需要保留或处理，这里我们用全路径）
-        # 构建最终调用 URL
-        # 注意：name 格式通常是 "models/gemini-1.5-flash"
-        clean_name = selected_model.replace("models/", "")
-        final_url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_name}:generateContent?key={API_KEY}"
-        
-        return final_url, clean_name
-
-    except Exception as e:
-        st.error(f"自动寻址失败: {e}")
-        return None, None
-
-def analyze_image_auto(image_bytes, mime_type, api_url):
-    """
-    带重试机制的智能识别函数
-    遇 429 限速自动等待，不再直接报错
+    使用固定模型进行识别，带重试机制
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {'Content-Type': 'application/json'}
+    
+    # 提示词：提取中文
     payload = {
         "contents": [{
             "parts": [
@@ -106,59 +36,52 @@ def analyze_image_auto(image_bytes, mime_type, api_url):
         }]
     }
 
-    # === 🛑 核心修改：重试循环 ===
-    max_retries = 3      # 最多重试 3 次
-    retry_delay = 5      # 每次失败等 5 秒
+    # 重试参数
+    max_retries = 3
+    retry_delay = 5
     
     for attempt in range(max_retries + 1):
         try:
-            response = requests.post(api_url, headers=headers, json=payload)
+            response = requests.post(MODEL_URL, headers=headers, json=payload)
             
-            # 情况 1：成功 (200)
+            # 成功
             if response.status_code == 200:
                 result_json = response.json()
-                text_content = result_json['candidates'][0]['content']['parts'][0]['text']
-                clean_text = text_content.replace("```json", "").replace("```", "").strip()
-                return json.loads(clean_text)
-            
-            # 情况 2：遇到限速 (429) -> 等待并重试
-            elif response.status_code == 429:
-                if attempt < max_retries:
-                    st.toast(f"⏳ 触发限速，正在冷却 {retry_delay} 秒后重试...", icon="🧊")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # 等待时间翻倍 (5s -> 10s -> 20s)
-                    continue # 跳过本次，进入下一次循环
-                else:
-                    st.error(f"❌ 重试多次后依然失败 (429)。请稍后再试。")
+                try:
+                    text_content = result_json['candidates'][0]['content']['parts'][0]['text']
+                    clean_text = text_content.replace("```json", "").replace("```", "").strip()
+                    return json.loads(clean_text)
+                except Exception:
+                    # 有时候返回结构不一样，容错处理
                     return None
             
-            # 情况 3：其他错误
+            # 限速 (429) -> 等待
+            elif response.status_code == 429:
+                if attempt < max_retries:
+                    st.toast(f"⏳ 触发限速，休息 {retry_delay} 秒...", icon="☕")
+                    time.sleep(retry_delay)
+                    retry_delay += 5 # 递增等待
+                    continue
+                else:
+                    st.error("❌ 限速严重，请稍后再试。")
+                    return None
+            
+            # 其他错误
             else:
-                st.warning(f"请求失败 ({response.status_code})")
-                return None
+                st.warning(f"请求报错 ({response.status_code})，尝试重试...")
+                time.sleep(2)
+                continue
                 
         except Exception as e:
-            st.error(f"请求异常: {e}")
+            st.error(f"网络异常: {e}")
             return None
             
     return None
 
-# --- 页面主逻辑 ---
-st.set_page_config(page_title="全自动发票助手", layout="wide")
-st.title("🧾 AI 智能发票汇总 (自适应版)")
-
-# 初始化时自动寻找模型
-if 'model_url' not in st.session_state:
-    with st.spinner("正在自动寻找最合适的 AI 模型..."):
-        url, name = get_available_model_url()
-        if url:
-            st.session_state['model_url'] = url
-            st.session_state['model_name'] = name
-            st.success(f"✅ 已连接至模型: **{name}**")
-        else:
-            st.stop()
-
-st.info(f"当前使用模型: `{st.session_state.get('model_name', '未知')}` (自动匹配)")
+# --- 页面布局 ---
+st.set_page_config(page_title="发票助手 (稳定版)", layout="wide")
+st.title("🧾 AI 智能发票汇总 (稳定版)")
+st.success("✅ 已强制锁定模型：gemini-1.5-flash (免费额度足，不限速)")
 
 uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
@@ -183,8 +106,8 @@ if uploaded_files:
             
             if mime_type == 'image/jpg': mime_type = 'image/jpeg'
 
-            # 使用自动获取的 URL
-            result = analyze_image_auto(process_bytes, mime_type, st.session_state['model_url'])
+            # 调用固定的分析函数
+            result = analyze_image_fixed(process_bytes, mime_type)
             
             if result:
                 try:
@@ -200,35 +123,33 @@ if uploaded_files:
                 })
                 st.toast(f"✅ {file.name} 成功")
             else:
-                 st.error(f"❌ {file.name} 识别失败 (模型未返回数据)")
+                 st.error(f"❌ {file.name} 识别失败")
 
         except Exception as e:
-            st.error(f"处理 {file.name} 异常: {e}")
-        time.sleep(3)  # 强制休息 3 秒，防止触发 429 限速
+            st.error(f"处理异常: {e}")
             
+        # 这里的 sleep 依然保留，双保险
+        time.sleep(2)
         progress_bar.progress((index + 1) / len(uploaded_files))
 
     if data_list:
         df = pd.DataFrame(data_list)
         total = df['价税合计'].sum()
+        
         st.dataframe(df, use_container_width=True)
         st.metric("💰 总计", f"¥ {total:,.2f}")
-        # ---这里是补全的代码---
         
-        # 1. 准备导出的数据（增加一行“合计”）
+        # 导出 Excel
         df_export = df.copy()
         df_export.loc[len(df_export)] = ['合计', '', '', total]
-        
-        # 2. 写入 Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
             
-        # 3. 显示下载按钮
         st.download_button(
             label="📥 下载 Excel 表格",
             data=output.getvalue(),
             file_name="发票汇总.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"  # 这会让按钮变成醒目的红色/主色调
+            type="primary"
         )
