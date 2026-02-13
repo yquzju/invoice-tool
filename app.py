@@ -7,232 +7,150 @@ import io
 from pdf2image import convert_from_bytes
 import time
 
-# --- ⚠️ 填入你的 SiliconFlow Key ---
+# --- ⚠️ 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" 
-
-# --- 备选模型名单 ---
-CANDIDATE_MODELS = [
-    "Qwen/Qwen2-VL-72B-Instruct",       # 优先尝试大模型
-    "Qwen/Qwen2-VL-7B-Instruct",        # 备选小模型
-    "deepseek-ai/deepseek-vl-7b-chat",
-    "TeleAI/TeleMM"
-]
-
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+CANDIDATE_MODELS = ["Qwen/Qwen2-VL-72B-Instruct", "Qwen/Qwen2-VL-7B-Instruct"]
 
-# --- 🟢 注入自定义 CSS：修改按钮为高级蓝色并适配大小 ---
+# --- 注入 CSS：实现高级感、同行对齐及居中 ---
 st.markdown("""
     <style>
-    /* 定制下载按钮样式 */
+    /* 1. 下载按钮：高级蓝、自适应宽度 */
     div.stDownloadButton > button {
-        background-color: #007bff !important; /* 高级深蓝色 */
+        background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.5rem 1.5rem !important; /* 上下左右内边距 */
+        padding: 0.5rem 1.5rem !important;
         border-radius: 8px !important;
         transition: all 0.3s ease;
-        width: auto !important; /* 宽度动态适配文案 */
-        display: inline-flex !important;
         font-weight: 500 !important;
+        width: auto !important;
     }
     div.stDownloadButton > button:hover {
-        background-color: #0056b3 !important; /* 悬停时颜色加深 */
-        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3) !important;
-        transform: translateY(-1px);
+        background-color: #0056b3 !important;
+        box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
     }
-    div.stDownloadButton > button:active {
-        transform: translateY(0px);
+
+    /* 2. 居中容器：处理文案与按钮的垂直对齐 */
+    .center-align-container {
+        display: flex;
+        align-items: center; /* 垂直居中 */
+        justify-content: center; /* 水平居中 */
+        gap: 20px; /* 文案与按钮的间距 */
+        margin-top: 30px;
+        padding-bottom: 50px;
+    }
+    .total-label {
+        font-size: 1.1rem;
+        color: #6C757D;
+        white-space: nowrap;
+    }
+    .total-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #212529;
+        white-space: nowrap;
     }
     </style>
 """, unsafe_allow_html=True)
 
-def analyze_image_auto_switch(image_bytes, mime_type):
-    """自动轮询模型，直到成功"""
+def analyze_image(image_bytes, mime_type):
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    last_error = ""
-
-    for model_name in CANDIDATE_MODELS:
-        status_placeholder = st.empty()
-        status_placeholder.caption(f"🔄 正在尝试: {model_name} ...")
-        
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    for model in CANDIDATE_MODELS:
         data = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Extract invoice data into JSON: 1.Item 2.Date 3.Total. JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            "max_tokens": 512,
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Extract invoice: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"},
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+            ]}],
             "temperature": 0.1
         }
-
         try:
-            response = requests.post(API_URL, headers=headers, json=data, timeout=45)
-            
-            if response.status_code == 200:
-                status_placeholder.empty()
-                content = response.json()['choices'][0]['message']['content']
+            resp = requests.post(API_URL, headers=headers, json=data, timeout=45)
+            if resp.status_code == 200:
+                content = resp.json()['choices'][0]['message']['content']
                 clean = content.replace("```json", "").replace("```", "").strip()
-                s = clean.find('{')
-                e = clean.rfind('}') + 1
-                return json.loads(clean[s:e]) if s != -1 else json.loads(clean)
-            
-            elif response.status_code == 403:
-                status_placeholder.empty()
-                if "7B" in model_name:
-                    raise Exception("余额不足，请检查 SiliconFlow 账号。")
-                continue
-            else:
-                status_placeholder.empty()
-                continue
-
-        except Exception as e:
-            status_placeholder.empty()
-            last_error = str(e)
-            continue
-            
-    raise Exception(f"所有模型均不可用。最后报错: {last_error}")
+                s, e = clean.find('{'), clean.rfind('}') + 1
+                return json.loads(clean[s:e])
+        except: continue
+    return None
 
 # --- 页面逻辑 ---
 st.set_page_config(page_title="AI 发票助手(QwenVL 版)", layout="wide")
 st.title("🧾 AI 发票助手 (QwenVL 可编辑版)")
 
-# 1. 初始化记忆缓存
-if 'invoice_cache' not in st.session_state:
-    st.session_state.invoice_cache = {}
-
-# 初始化“已删除文件”列表
-if 'ignored_files' not in st.session_state:
-    st.session_state.ignored_files = set()
+if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
+if 'ignored_files' not in st.session_state: st.session_state.ignored_files = set()
 
 uploaded_files = st.file_uploader("请上传发票文件", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
 if uploaded_files:
     st.divider()
-    
-    new_files = []
-    for file in uploaded_files:
-        file_id = f"{file.name}_{file.size}"
-        if file_id not in st.session_state.invoice_cache and file_id not in st.session_state.ignored_files:
-            new_files.append(file)
-    
-    if new_files:
-        progress_bar = st.progress(0)
-        st.info(f"检测到 {len(new_files)} 张新发票，准备开始识别...")
-    
     current_data_list = []
     
     for index, file in enumerate(uploaded_files):
         file_id = f"{file.name}_{file.size}"
-        
-        if file_id in st.session_state.ignored_files:
-            continue
-
+        if file_id in st.session_state.ignored_files: continue
         if file_id in st.session_state.invoice_cache:
-            result = st.session_state.invoice_cache[file_id]
+            res = st.session_state.invoice_cache[file_id]
         else:
             try:
-                file_bytes = file.read()
-                process_bytes = file_bytes
-                mime_type = file.type
-                
-                if file.type == "application/pdf":
-                    images = convert_from_bytes(file_bytes)
-                    if images:
-                        img_buffer = io.BytesIO()
-                        images[0].save(img_buffer, format="JPEG")
-                        process_bytes = img_buffer.getvalue()
-                        mime_type = "image/jpeg"
-                if mime_type == 'image/jpg': mime_type = 'image/jpeg'
-
-                result = analyze_image_auto_switch(process_bytes, mime_type)
-                
-                if result:
-                    st.session_state.invoice_cache[file_id] = result
-                    st.toast(f"✅ {file.name} 识别成功")
-                
-                if file in new_files:
-                    curr_progress = (new_files.index(file) + 1) / len(new_files)
-                    progress_bar.progress(curr_progress)
-
-            except Exception as e:
-                st.error(f"❌ {file.name} 失败: {e}")
-                result = None
-
-        if result:
-            try:
-                raw_amt = str(result.get('Total', 0)).replace('¥','').replace(',','').replace('元','')
-                amt = float(raw_amt)
-            except:
-                amt = 0.0
-            
-            current_data_list.append({
-                "文件名": file.name,
-                "日期": result.get('Date', ''),
-                "项目": result.get('Item', ''),
-                "金额": amt,
-                "file_id": file_id
-            })
+                f_bytes = file.read()
+                m_type = file.type
+                if m_type == "application/pdf":
+                    img = convert_from_bytes(f_bytes)[0]
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG")
+                    f_bytes, m_type = buf.getvalue(), "image/jpeg"
+                res = analyze_image(f_bytes, m_type)
+                if res: st.session_state.invoice_cache[file_id] = res
+            except: res = None
+        if res:
+            amt = float(str(res.get('Total', 0)).replace('¥','').replace(',',''))
+            current_data_list.append({"文件名": file.name, "日期": res.get('Date', ''), "项目": res.get('Item', ''), "金额": amt, "file_id": file_id})
 
     if current_data_list:
         df = pd.DataFrame(current_data_list)
+        edited_df = st.data_editor(df, column_config={"file_id": None, "金额": st.column_config.NumberColumn(format="%.2f")}, num_rows="dynamic", use_container_width=True)
         
-        st.caption("✨ 提示：您可以直接在下方表格中 **修改内容**，或选中行并按 Delete 键(或点击右侧垃圾桶) **删除行**。")
-        
-        edited_df = st.data_editor(
-            df,
-            column_config={
-                "file_id": None,
-                "金额": st.column_config.NumberColumn(format="¥ %.2f"),
-                "文件名": st.column_config.TextColumn(disabled=True)
-            },
-            num_rows="dynamic",
-            use_container_width=True,
-            key="invoice_editor"
-        )
-        
-        # 同步逻辑
-        original_ids = set(df["file_id"])
-        current_ids = set(edited_df["file_id"])
-        deleted_ids = original_ids - current_ids
-        
+        # 处理删除逻辑
+        deleted_ids = set(df["file_id"]) - set(edited_df["file_id"])
         if deleted_ids:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        for index, row in edited_df.iterrows():
-            fid = row['file_id']
-            if fid in st.session_state.invoice_cache:
-                cached_item = st.session_state.invoice_cache[fid]
-                cached_item['Date'] = row['日期']
-                cached_item['Item'] = row['项目']
-                cached_item['Total'] = row['金额']
-
-        # 统计与展示
+        # --- 🟢 核心修改：居中同行布局 ---
         total = edited_df['金额'].sum()
-        st.metric("💰 总金额合计", f"¥ {total:,.2f}")
         
-        # 导出 Excel
-        df_export = edited_df.drop(columns=["file_id"])
-        df_export.loc[len(df_export)] = ['合计', '', '', total]
+        # 创建 [3, 4, 3] 布局，将内容集中在中间 40% 的区域
+        col_side1, col_main, col_side2 = st.columns([3, 4, 3])
         
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_export.to_excel(writer, index=False)
+        with col_main:
+            # 使用嵌套列进一步微调金额和按钮的水平间距
+            inner_left, inner_right = st.columns([1.5, 1])
             
-        # 🟢 修改点：文案改为“下载 excel”，移除 type="primary" 依靠 CSS 控制颜色
-        st.download_button(
-            label="📥 下载 excel", 
-            data=output.getvalue(), 
-            file_name="发票汇总.xlsx", 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            with inner_left:
+                # 渲染总金额文本
+                st.markdown(f"""
+                    <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; height: 100%;">
+                        <span class="total-label">💰 总计金额</span>
+                        <span class="total-value">¥ {total:,.2f}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with inner_right:
+                # 渲染导出逻辑与按钮
+                df_export = edited_df.drop(columns=["file_id"])
+                df_export.loc[len(df_export)] = ['合计', '', '', total]
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_export.to_excel(writer, index=False)
+                
+                # 按钮会自动在 inner_right 中左对齐，从而紧跟在金额右边
+                st.download_button(
+                    label="📥 下载 excel", 
+                    data=output.getvalue(), 
+                    file_name="发票汇总.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
