@@ -19,7 +19,7 @@ def analyze_image_via_http(image_bytes, mime_type):
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     
     # 2. 准备请求 URL (使用最稳定的 gemini-1.5-flash)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={API_KEY}"
     
     # 3. 准备请求头和数据 (纯 JSON，通用性最强)
     headers = {'Content-Type': 'application/json'}
