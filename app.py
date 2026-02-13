@@ -10,11 +10,51 @@ import time
 # --- ⚠️ 请填入你的 API Key ---
 API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg"
 
-def analyze_image_robust(image_bytes, mime_type):
+def get_best_model():
     """
-    火力覆盖模式：轮询多个可能的模型地址，直到成功
+    诊断模式：列出所有可用模型，并自动选择一个
+    """
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            st.error(f"连接 Google 失败 (Status {response.status_code})，请检查网络或 API Key。")
+            return None, []
+
+        data = response.json()
+        models = data.get('models', [])
+        
+        # 筛选支持生成的模型
+        candidates = []
+        for m in models:
+            if 'generateContent' in m.get('supportedGenerationMethods', []):
+                # 只保留名字
+                name = m['name'].replace('models/', '')
+                candidates.append(name)
+        
+        if not candidates:
+            return None, []
+            
+        # 智能选择策略：优先找 flash
+        selected = candidates[0]
+        for name in candidates:
+            if 'flash' in name:
+                selected = name
+                break
+                
+        return selected, candidates
+
+    except Exception as e:
+        st.error(f"获取模型列表失败: {e}")
+        return None, []
+
+def analyze_with_retry(image_bytes, mime_type, model_name):
+    """
+    针对 2.5 模型的慢速重试逻辑
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
     payload = {
@@ -30,73 +70,78 @@ def analyze_image_robust(image_bytes, mime_type):
             ]
         }]
     }
-
-    # === 🛑 备选模型名单 (按优先级排序) ===
-    # 我们把所有可能的别名都列出来，总有一个能通！
-    candidate_urls = [
-        # 1. 官方推荐的最新稳定版别名
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}",
-        # 2. 指定版本号 001 (非常稳)
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key={API_KEY}",
-        # 3. 指定版本号 002 (更新更强)
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={API_KEY}",
-        # 4. 指定版本号 8b (轻量版，极快)
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key={API_KEY}",
-        # 5. 最后大招：如果 Flash 都不行，用 Pro (虽然慢点但能用)
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={API_KEY}",
-    ]
-
-    last_error = ""
-
-    # 循环尝试
-    for i, url in enumerate(candidate_urls):
+    
+    # 针对新模型的激进重试策略
+    for attempt in range(1, 4):
         try:
-            # st.toast(f"正在尝试第 {i+1} 条通道...", icon="🔌") # 调试用，嫌烦可以注释掉
             response = requests.post(url, headers=headers, json=payload)
             
-            # === 成功 ===
             if response.status_code == 200:
-                result_json = response.json()
+                # 成功！
                 try:
-                    text_content = result_json['candidates'][0]['content']['parts'][0]['text']
-                    clean_text = text_content.replace("```json", "").replace("```", "").strip()
+                    res_json = response.json()
+                    text = res_json['candidates'][0]['content']['parts'][0]['text']
+                    clean_text = text.replace("```json", "").replace("```", "").strip()
                     return json.loads(clean_text)
-                except Exception:
-                    continue # 解析失败，试下一个
+                except:
+                    return None
             
-            # === 失败处理 ===
             elif response.status_code == 429:
-                st.toast("通道拥堵 (429)，自动切换备用线路...", icon="⚠️")
-                time.sleep(1) # 小歇一下换下一个
+                # 遇到限速，根据次数指数级等待
+                wait_time = 15 * attempt  # 第一次等15秒，第二次等30秒...
+                st.toast(f"⏳ 触发限速 (429)，正在冷却 {wait_time} 秒...", icon="🧊")
+                time.sleep(wait_time)
                 continue
             
             else:
-                # 记录错误 (404等)
-                last_error = f"HTTP {response.status_code}"
-                continue # 换下一个
+                st.warning(f"请求报错 {response.status_code}，重试中...")
+                time.sleep(5)
+                continue
                 
         except Exception as e:
-            last_error = str(e)
-            continue
-
-    # 如果循环跑完了都没成功
-    st.error(f"❌ 所有通道均响应失败。最后报错: {last_error}")
+            st.error(f"网络错误: {e}")
+            time.sleep(5)
+            
     return None
 
-# --- 页面布局 ---
-st.set_page_config(page_title="发票助手 (终极版)", layout="wide")
-st.title("🧾 AI 智能发票汇总 (多通道自动切换版)")
-st.success("✅ 已启用多线路冗余：自动在 Flash-001/002/Pro 之间切换，确保连接成功率。")
+# --- 页面逻辑 ---
+st.set_page_config(page_title="AI 发票助手 (诊断版)", layout="wide")
+st.title("🧾 AI 发票助手 (自动降速版)")
 
+# 1. 启动时自动获取模型
+if 'target_model' not in st.session_state:
+    with st.spinner("正在连接 Google 服务器检测可用模型..."):
+        best_model, all_models = get_best_model()
+        if best_model:
+            st.session_state['target_model'] = best_model
+            st.session_state['all_models'] = all_models
+        else:
+            st.error("❌ 未找到任何可用模型，请检查 Key 是否有效。")
+            st.stop()
+
+# 显示当前状态
+st.info(f"🚀 已自动锁定可用模型: **{st.session_state['target_model']}**")
+with st.expander("查看所有可用模型列表 (调试用)"):
+    st.write(st.session_state.get('all_models', []))
+
+# 2. 文件上传
 uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
 if uploaded_files:
     st.divider()
+    st.warning("⚠️ 注意：检测到使用的是最新版模型，为防止封号，每张图片处理间隔较长 (10秒+)，请耐心等待。")
+    
     data_list = []
     progress_bar = st.progress(0)
     
     for index, file in enumerate(uploaded_files):
+        # 🟢 核心降速逻辑：每处理一张前，强制休息 10 秒
+        if index > 0:
+            with st.spinner(f"⏳ 正在冷却，防止限速 (10秒)..."):
+                time.sleep(10)
+        
         try:
+            # 预处理
             file_bytes = file.read()
             process_bytes = file_bytes
             mime_type = file.type
@@ -108,11 +153,11 @@ if uploaded_files:
                     images[0].save(img_buffer, format="JPEG")
                     process_bytes = img_buffer.getvalue()
                     mime_type = "image/jpeg"
-            
             if mime_type == 'image/jpg': mime_type = 'image/jpeg'
 
-            # 调用多通道函数
-            result = analyze_image_robust(process_bytes, mime_type)
+            # 识别
+            st.toast(f"正在处理: {file.name}")
+            result = analyze_with_retry(process_bytes, mime_type, st.session_state['target_model'])
             
             if result:
                 try:
@@ -126,17 +171,16 @@ if uploaded_files:
                     "发票项目": result.get('Item', ''),
                     "价税合计": amt
                 })
-                st.toast(f"✅ {file.name} 成功")
+                st.success(f"✅ {file.name} 处理完成")
             else:
-                 st.error(f"❌ {file.name} 识别失败")
+                 st.error(f"❌ {file.name} 失败")
 
         except Exception as e:
-            st.error(f"系统异常: {e}")
+            st.error(f"异常: {e}")
             
-        # 基础防抖等待
-        time.sleep(2)
         progress_bar.progress((index + 1) / len(uploaded_files))
 
+    # 3. 结果导出
     if data_list:
         df = pd.DataFrame(data_list)
         total = df['价税合计'].sum()
@@ -144,17 +188,10 @@ if uploaded_files:
         st.dataframe(df, use_container_width=True)
         st.metric("💰 总计", f"¥ {total:,.2f}")
         
-        # 导出 Excel
         df_export = df.copy()
         df_export.loc[len(df_export)] = ['合计', '', '', total]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
             
-        st.download_button(
-            label="📥 下载 Excel 表格",
-            data=output.getvalue(),
-            file_name="发票汇总.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
+        st.download_button("📥 下载 Excel 表格", output.getvalue(), "发票汇总.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
