@@ -8,7 +8,7 @@ from pdf2image import convert_from_bytes
 import time
 
 # --- ⚠️ 填入你的 SiliconFlow Key ---
-API_KEY = "你的_sk_开头_KEY" 
+API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" 
 
 # --- 备选模型名单 ---
 CANDIDATE_MODELS = [
