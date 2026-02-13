@@ -8,7 +8,7 @@ from pdf2image import convert_from_bytes
 
 # --- 1. 配置部分 ---
 # 替换你的 API KEY
-API_KEY = "你的_API_KEY" 
+API_KEY = "AIzaSyARtowfN-m9H80rbXgpXGBR-xZQIzp8LSg" 
 
 def analyze_image_via_http(image_bytes, mime_type):
     """
