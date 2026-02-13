@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import pandas as pd
 import requests
@@ -161,6 +162,7 @@ if uploaded_files:
 
         except Exception as e:
             st.error(f"处理 {file.name} 异常: {e}")
+        time.sleep(3)  # 强制休息 3 秒，防止触发 429 限速
             
         progress_bar.progress((index + 1) / len(uploaded_files))
 
