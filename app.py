@@ -66,7 +66,8 @@ def get_available_model_url():
 
 def analyze_image_auto(image_bytes, mime_type, api_url):
     """
-    使用自动获取的 URL 进行识别
+    带重试机制的智能识别函数
+    遇 429 限速自动等待，不再直接报错
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {'Content-Type': 'application/json'}
@@ -84,22 +85,42 @@ def analyze_image_auto(image_bytes, mime_type, api_url):
         }]
     }
 
-    try:
-        response = requests.post(api_url, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            result_json = response.json()
-            text_content = result_json['candidates'][0]['content']['parts'][0]['text']
-            clean_text = text_content.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_text)
-        else:
-            # 如果报错，打印出来看
-            st.warning(f"当前模型请求失败 ({response.status_code})，尝试下一个...")
+    # === 🛑 核心修改：重试循环 ===
+    max_retries = 3      # 最多重试 3 次
+    retry_delay = 5      # 每次失败等 5 秒
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(api_url, headers=headers, json=payload)
+            
+            # 情况 1：成功 (200)
+            if response.status_code == 200:
+                result_json = response.json()
+                text_content = result_json['candidates'][0]['content']['parts'][0]['text']
+                clean_text = text_content.replace("```json", "").replace("```", "").strip()
+                return json.loads(clean_text)
+            
+            # 情况 2：遇到限速 (429) -> 等待并重试
+            elif response.status_code == 429:
+                if attempt < max_retries:
+                    st.toast(f"⏳ 触发限速，正在冷却 {retry_delay} 秒后重试...", icon="🧊")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 等待时间翻倍 (5s -> 10s -> 20s)
+                    continue # 跳过本次，进入下一次循环
+                else:
+                    st.error(f"❌ 重试多次后依然失败 (429)。请稍后再试。")
+                    return None
+            
+            # 情况 3：其他错误
+            else:
+                st.warning(f"请求失败 ({response.status_code})")
+                return None
+                
+        except Exception as e:
+            st.error(f"请求异常: {e}")
             return None
             
-    except Exception as e:
-        st.error(f"请求异常: {e}")
-        return None
+    return None
 
 # --- 页面主逻辑 ---
 st.set_page_config(page_title="全自动发票助手", layout="wide")
