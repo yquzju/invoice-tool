@@ -5,43 +5,58 @@ import base64
 import json
 import io
 from pdf2image import convert_from_bytes
+import time
 
-# --- 1. 基础配置 ---
+# --- ⚠️ 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" 
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 优先使用更省点数且稳定的 7B 模型
-CANDIDATE_MODELS = ["Qwen/Qwen2-VL-7B-Instruct", "Qwen/Qwen2-VL-72B-Instruct"]
+CANDIDATE_MODELS = ["Qwen/Qwen2-VL-72B-Instruct", "Qwen/Qwen2-VL-7B-Instruct"]
 
-# --- 2. 注入 CSS (修复按钮样式与对齐) ---
+# --- 注入 CSS：实现高级感、同行对齐及居中 ---
 st.markdown("""
     <style>
-    /* 高级蓝色按钮 */
+    /* 1. 下载按钮：高级蓝、自适应宽度 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
         padding: 0.5rem 1.5rem !important;
         border-radius: 8px !important;
+        transition: all 0.3s ease;
+        font-weight: 500 !important;
         width: auto !important;
     }
-    /* 同行居中对齐 */
-    .footer-container {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 20px;
-        margin-top: 30px;
+    div.stDownloadButton > button:hover {
+        background-color: #0056b3 !important;
+        box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
     }
-    .total-label { font-size: 1.1rem; color: #666; }
-    .total-value { font-size: 2rem; font-weight: bold; color: #333; }
+
+    /* 2. 居中容器：处理文案与按钮的垂直对齐 */
+    .center-align-container {
+        display: flex;
+        align-items: center; /* 垂直居中 */
+        justify-content: center; /* 水平居中 */
+        gap: 20px; /* 文案与按钮的间距 */
+        margin-top: 30px;
+        padding-bottom: 50px;
+    }
+    .total-label {
+        font-size: 1.1rem;
+        color: #6C757D;
+        white-space: nowrap;
+    }
+    .total-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #212529;
+        white-space: nowrap;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 识别函数 (带自动重试) ---
-def analyze_invoice(image_bytes, mime_type):
+def analyze_image(image_bytes, mime_type):
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    
     for model in CANDIDATE_MODELS:
         data = {
             "model": model,
@@ -58,30 +73,27 @@ def analyze_invoice(image_bytes, mime_type):
                 clean = content.replace("```json", "").replace("```", "").strip()
                 s, e = clean.find('{'), clean.rfind('}') + 1
                 return json.loads(clean[s:e])
-        except:
-            continue
+        except: continue
     return None
 
-# --- 4. 页面主体 ---
+# --- 页面逻辑 ---
 st.set_page_config(page_title="AI 发票助手(QwenVL 版)", layout="wide")
-st.title("🧾 AI 发票助手 (修复版)")
+st.title("🧾 AI 发票助手 (QwenVL 可编辑版)")
 
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
-if 'ignored' not in st.session_state: st.session_state.ignored = set()
+if 'ignored_files' not in st.session_state: st.session_state.ignored_files = set()
 
-uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
+uploaded_files = st.file_uploader("请上传发票文件", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
 if uploaded_files:
-    valid_files = [f for f in uploaded_files if f"{f.name}_{f.size}" not in st.ignored]
-    current_data = []
+    st.divider()
+    current_data_list = []
     
-    # 进度提示
-    progress_bar = st.progress(0)
-    
-    for i, file in enumerate(uploaded_files):
-        fid = f"{file.name}_{file.size}"
-        if fid in st.session_state.invoice_cache:
-            res = st.session_state.invoice_cache[fid]
+    for index, file in enumerate(uploaded_files):
+        file_id = f"{file.name}_{file.size}"
+        if file_id in st.session_state.ignored_files: continue
+        if file_id in st.session_state.invoice_cache:
+            res = st.session_state.invoice_cache[file_id]
         else:
             try:
                 f_bytes = file.read()
@@ -91,31 +103,54 @@ if uploaded_files:
                     buf = io.BytesIO()
                     img.save(buf, format="JPEG")
                     f_bytes, m_type = buf.getvalue(), "image/jpeg"
-                res = analyze_invoice(f_bytes, m_type)
-                if res: st.session_state.invoice_cache[fid] = res
+                res = analyze_image(f_bytes, m_type)
+                if res: st.session_state.invoice_cache[file_id] = res
             except: res = None
-        
         if res:
             amt = float(str(res.get('Total', 0)).replace('¥','').replace(',',''))
-            current_data.append({"文件名": file.name, "日期": res.get('Date', ''), "项目": res.get('Item', ''), "金额": amt, "fid": fid})
-        progress_bar.progress((i + 1) / len(uploaded_files))
+            current_data_list.append({"文件名": file.name, "日期": res.get('Date', ''), "项目": res.get('Item', ''), "金额": amt, "file_id": file_id})
 
-    if current_data:
-        df = pd.DataFrame(current_data)
-        edited_df = st.data_editor(df, column_config={"fid": None}, use_container_width=True, num_rows="dynamic")
+    if current_data_list:
+        df = pd.DataFrame(current_data_list)
+        edited_df = st.data_editor(df, column_config={"file_id": None, "金额": st.column_config.NumberColumn(format="%.2f")}, num_rows="dynamic", use_container_width=True)
         
-        # 居中统计与导出
+        # 处理删除逻辑
+        deleted_ids = set(df["file_id"]) - set(edited_df["file_id"])
+        if deleted_ids:
+            st.session_state.ignored_files.update(deleted_ids)
+            st.rerun()
+
+        # --- 🟢 核心修改：居中同行布局 ---
         total = edited_df['金额'].sum()
         
-        # 导出逻辑
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.drop(columns='fid').to_excel(writer, index=False)
-            
-        st.markdown(f"""
-            <div class="footer-container">
-                <div><span class="total-label">💰 总计金额</span> <span class="total-value">¥ {total:,.2f}</span></div>
-            </div>
-        """, unsafe_allow_html=True)
+        # 创建 [3, 4, 3] 布局，将内容集中在中间 40% 的区域
+        col_side1, col_main, col_side2 = st.columns([3, 4, 3])
         
-        st.download_button("导出 excel", output.getvalue(), "发票汇总.xlsx")
+        with col_main:
+            # 使用嵌套列进一步微调金额和按钮的水平间距
+            inner_left, inner_right = st.columns([1.5, 1])
+            
+            with inner_left:
+                # 渲染总金额文本
+                st.markdown(f"""
+                    <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; height: 100%;">
+                        <span class="total-label">💰 总计金额</span>
+                        <span class="total-value">¥ {total:,.2f}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with inner_right:
+                # 渲染导出逻辑与按钮
+                df_export = edited_df.drop(columns=["file_id"])
+                df_export.loc[len(df_export)] = ['合计', '', '', total]
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_export.to_excel(writer, index=False)
+                
+                # 按钮会自动在 inner_right 中左对齐，从而紧跟在金额右边
+                st.download_button(
+                    label="📥 下载 excel", 
+                    data=output.getvalue(), 
+                    file_name="发票汇总.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
