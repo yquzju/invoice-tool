@@ -18,55 +18,44 @@ CANDIDATE_MODELS = [
     "TeleAI/TeleMM"
 ]
 
-API_URL = "https://api.siliconflow.cn/v1/chat/completics"
+API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-# --- 注入 CSS 实现整体居中布局与高级 UI ---
+# --- 注入 CSS 实现高级感 UI 和按钮居中 ---
 st.markdown("""
     <style>
-    /* 全局背景优化 */
-    .stApp {
-        background-color: #F8F9FA;
-    }
-
-    /* 定制下载按钮：居中、高级蓝、宽度适中 */
-    div.stDownloadButton {
-        display: flex;
-        justify-content: center; /* 核心：按钮水平居中 */
-        margin-top: 10px;
-    }
+    /* 定制下载按钮样式：高级蓝色 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
         border: none !important;
-        padding: 0.7rem 3rem !important;
-        border-radius: 50px !important; /* 圆角矩形更显高级 */
-        font-weight: 500 !important;
+        padding: 0.6rem 2.5rem !important;
+        border-radius: 8px !important;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(0,123,255,0.2) !important;
+        font-weight: 500 !important;
+        width: 100%; /* 让按钮填满列宽以实现视觉居中 */
     }
     div.stDownloadButton > button:hover {
         background-color: #0056b3 !important;
-        box-shadow: 0 6px 20px rgba(0,123,255,0.3) !important;
-        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,123,255,0.3) !important;
+        transform: translateY(-1px);
     }
     
-    /* 统计区域：居中排列 */
+    /* 1. 修改统计区域：去掉白底框 [对应截图1修改] */
     .summary-section {
         display: flex;
         flex-direction: column;
-        align-items: center; /* 核心：内容水平居中 */
-        margin-top: 30px;
-        padding: 20px;
-        background-color: white;
-        border-radius: 12px;
-        border: 1px solid #E9ECEF;
+        align-items: center; 
+        margin-top: 20px;
+        padding: 10px;
+        background-color: transparent !important; /* 去掉底色 */
+        border: none !important;                 /* 去掉边框 */
+        box-shadow: none !important;              /* 去掉阴影 */
     }
     
     .total-amount-wrapper {
         display: flex;
         align-items: baseline;
         gap: 12px;
-        margin-bottom: 5px;
     }
     .total-label {
         font-size: 1.1rem;
@@ -164,10 +153,8 @@ if uploaded_files:
             st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
 
-        # --- 🟢 重新设计的居中统计与下载区域 ---
+        # --- 🟢 居中统计区域 (已去掉背景框) ---
         total = edited_df['金额'].sum()
-        
-        # 居中显示总金额
         st.markdown(f"""
             <div class="summary-section">
                 <div class="total-amount-wrapper">
@@ -184,10 +171,13 @@ if uploaded_files:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
         
-        # 居中显示下载按钮 (CSS 控制居中)
-        st.download_button(
-            label="📥 下载 excel", 
-            data=output.getvalue(), 
-            file_name="发票汇总.xlsx", 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        # --- 🟢 2. 下载按钮左右居中 [对应截图2修改] ---
+        # 使用 3 列布局，将按钮放在中间一列来实现居中
+        col_side1, col_center, col_side2 = st.columns([4, 2, 4])
+        with col_center:
+            st.download_button(
+                label="📥 下载 excel", 
+                data=output.getvalue(), 
+                file_name="发票汇总.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
