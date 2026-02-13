@@ -169,3 +169,22 @@ if uploaded_files:
         total = df['价税合计'].sum()
         st.dataframe(df, use_container_width=True)
         st.metric("💰 总计", f"¥ {total:,.2f}")
+        # ---这里是补全的代码---
+        
+        # 1. 准备导出的数据（增加一行“合计”）
+        df_export = df.copy()
+        df_export.loc[len(df_export)] = ['合计', '', '', total]
+        
+        # 2. 写入 Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False)
+            
+        # 3. 显示下载按钮
+        st.download_button(
+            label="📥 下载 Excel 表格",
+            data=output.getvalue(),
+            file_name="发票汇总.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"  # 这会让按钮变成醒目的红色/主色调
+        )
