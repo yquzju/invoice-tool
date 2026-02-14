@@ -10,17 +10,17 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 备选模型列表
+# 备选模型优先级
 CANDIDATE_MODELS = [
     "Qwen/Qwen2-VL-72B-Instruct", 
     "Qwen/Qwen2-VL-7B-Instruct",
     "TeleAI/TeleMM"
 ]
 
-# --- 2. 注入 CSS：优化按钮、布局与状态显示 ---
+# --- 2. 注入 CSS (美化日志与按钮) ---
 st.markdown("""
     <style>
-    /* 高级蓝色按钮，自适应宽度 */
+    /* 高级蓝色按钮 */
     div.stDownloadButton > button {
         background-color: #007bff !important;
         color: white !important;
@@ -39,7 +39,7 @@ st.markdown("""
     }
     button[data-testid="baseButton-primary"] p::before { content: none !important; }
 
-    /* 底部布局容器 */
+    /* 底部总金额样式 */
     .total-container {
         display: flex;
         align-items: baseline;
@@ -50,28 +50,28 @@ st.markdown("""
     .total-label { font-size: 1.2rem; color: #6C757D; }
     .total-value { font-size: 2rem; font-weight: 700; color: #212529; }
     
-    /* 进度状态文字 */
-    .status-text { font-size: 14px; color: #007bff; margin-bottom: 5px; }
+    /* 实时日志样式 */
+    .log-success { color: #28a745; font-weight: bold; }
+    .log-error { color: #dc3545; font-weight: bold; }
+    .log-info { color: #007bff; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 核心识别函数 (带实时状态反馈) ---
-def analyze_invoice(image_bytes, mime_type, status_box):
+# --- 3. 核心识别逻辑 (带详细反馈) ---
+def analyze_invoice(image_bytes, mime_type, log_placeholder):
     """
-    status_box: 用于在界面上实时打印当前正在连接哪个模型
+    log_placeholder: 用于在界面上打印实时步骤
     """
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-    
-    # 提示词：强制要求提取价税合计
     prompt = "Extract invoice data into JSON: 1.Item (Name), 2.Date (YYYY-MM-DD), 3.Total (Grand Total including tax/价税合计). JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"
 
-    last_err = ""
+    final_error = ""
+    
     for model in CANDIDATE_MODELS:
-        # 🟢 实时反馈：告诉用户正在尝试哪个模型
-        if status_box:
-            status_box.markdown(f"🔄 正在请求模型：**{model}** ...")
-            
+        # 🟢 实时反馈：告诉用户正在连哪个模型
+        log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;🔄 正在请求模型：`{model}` ...")
+        
         data = {
             "model": model,
             "messages": [{"role": "user", "content": [
@@ -80,27 +80,34 @@ def analyze_invoice(image_bytes, mime_type, status_box):
             ]}],
             "max_tokens": 512, "temperature": 0.1
         }
+        
         try:
             resp = requests.post(API_URL, headers=headers, json=data, timeout=30)
+            
             if resp.status_code == 200:
+                # 成功！
+                log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;✅ 模型 `{model}` 识别成功！")
                 content = resp.json()['choices'][0]['message']['content']
                 clean = content.replace("```json", "").replace("```", "").strip()
                 s, e = clean.find('{'), clean.rfind('}') + 1
                 return json.loads(clean[s:e])
+            
+            elif resp.status_code == 403:
+                # 针对 403 限流的特殊提示
+                log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;⚠️ 模型 `{model}` 繁忙 (HTTP 403)，正在切换备用模型...")
+                time.sleep(1) # 遇到限流，主动冷却一下
             else:
-                last_err = f"HTTP {resp.status_code}"
+                log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;⚠️ 模型 `{model}` 返回错误: {resp.status_code}")
+                
         except Exception as e:
-            last_err = str(e)
+            log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;❌ 连接错误: {str(e)}")
             continue
             
-    # 如果所有模型都失败，打印最后一次错误
-    if status_box:
-        status_box.markdown(f"⚠️ 所有模型尝试失败: {last_err}")
     return None
 
-# --- 4. 页面逻辑 ---
-st.set_page_config(page_title="AI 发票助手 (QwenVL)", layout="wide")
-st.title("🧾 AI 发票助手 (QwenVL 实时反馈版)")
+# --- 4. 页面主程序 ---
+st.set_page_config(page_title="AI 发票助手 (可视化版)", layout="wide")
+st.title("🧾 AI 发票助手 (可视化控制台版)")
 
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
 if 'ignored_files' not in st.session_state: st.session_state.ignored_files = set()
@@ -110,73 +117,73 @@ uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg',
 if uploaded_files:
     st.divider()
     
-    # 1. 找出需要处理的文件 (新文件 OR 之前失败的文件)
+    # 1. 筛选待处理任务
     files_to_process = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         if fid in st.session_state.ignored_files: continue
-        
-        # 没处理过，或者上次处理失败的，都要加入队列
+        # 如果未处理过，或上次失败了，都需要处理
         if fid not in st.session_state.invoice_cache or st.session_state.invoice_cache[fid].get('status') == 'failed':
             files_to_process.append(f)
 
-    # 2. 批量处理循环 (带可视化反馈)
+    # 2. 批量处理循环 (核心交互优化)
     if files_to_process:
-        # 创建一个固定的状态显示区
-        status_container = st.container()
-        with status_container:
-            st.info(f"🚀 准备处理 {len(files_to_process)} 张发票，请保持网络通畅...")
-            main_progress = st.progress(0)
-            current_status = st.empty() # 专门用来显示“正在识别 xxx...”
-            model_status = st.empty()   # 专门用来显示“正在连接 Qwen...”
-        
-        for i, file in enumerate(files_to_process):
-            fid = f"{file.name}_{file.size}"
+        # 创建一个显眼的控制台区域
+        with st.status("🚀 正在启动识别任务...", expanded=True) as status_box:
+            st.write(f"检测到 {len(files_to_process)} 张待处理发票，开始队列处理...")
+            progress_bar = st.progress(0)
             
-            # 更新文案：明确告诉用户正在处理哪张图
-            current_status.markdown(f"**正在处理 ({i+1}/{len(files_to_process)})：** `{file.name}`")
+            # 创建动态日志占位符
+            current_file_info = st.empty()
+            process_log = st.empty()
             
-            try:
-                # 读取文件
-                file.seek(0)
-                f_bytes = file.read()
-                m_type = file.type
+            for i, file in enumerate(files_to_process):
+                fid = f"{file.name}_{file.size}"
                 
-                # PDF 转图
-                if m_type == "application/pdf":
-                    model_status.caption("📄 正在将 PDF 转换为图像...")
-                    images = convert_from_bytes(f_bytes)
-                    if images:
-                        buf = io.BytesIO()
-                        images[0].save(buf, format="JPEG")
-                        f_bytes, m_type = buf.getvalue(), "image/jpeg"
-                elif m_type == 'image/jpg': 
-                    m_type = 'image/jpeg'
+                # 更新当前文件名，让用户知道卡在哪张图
+                status_box.update(label=f"正在处理 ({i+1}/{len(files_to_process)}): {file.name}")
+                current_file_info.info(f"📄 **当前文件**: `{file.name}`")
+                
+                try:
+                    # 文件预处理
+                    file.seek(0)
+                    f_bytes = file.read()
+                    m_type = file.type
+                    
+                    if m_type == "application/pdf":
+                        process_log.markdown("&nbsp;&nbsp;&nbsp;&nbsp;📄 检测到 PDF，正在转换为图像...")
+                        images = convert_from_bytes(f_bytes)
+                        if images:
+                            buf = io.BytesIO()
+                            images[0].save(buf, format="JPEG")
+                            f_bytes, m_type = buf.getvalue(), "image/jpeg"
+                    elif m_type == 'image/jpg': m_type = 'image/jpeg'
 
-                # 调用识别 (传入 model_status 占位符)
-                result = analyze_invoice(f_bytes, m_type, model_status)
+                    # 调用识别 (传入 process_log 以实时打印步骤)
+                    result = analyze_invoice(f_bytes, m_type, process_log)
+                    
+                    if result:
+                        st.session_state.invoice_cache[fid] = {'status': 'success', 'data': result}
+                        st.toast(f"✅ {file.name} 完成！")
+                    else:
+                        st.session_state.invoice_cache[fid] = {'status': 'failed'}
+                        st.error(f"❌ {file.name} 最终识别失败")
                 
-                if result:
-                    st.session_state.invoice_cache[fid] = {'status': 'success', 'data': result}
-                else:
+                except Exception as e:
                     st.session_state.invoice_cache[fid] = {'status': 'failed'}
-            
-            except Exception as e:
-                st.session_state.invoice_cache[fid] = {'status': 'failed'}
-            
-            # 更新进度条
-            main_progress.progress((i + 1) / len(files_to_process))
-            
-            # 🟢 关键：强制刷新 UI 缓存，防止界面卡死
-            time.sleep(0.5) 
+                    st.error(f"❌ {file.name} 发生异常: {e}")
 
-        # 循环结束，清空状态区并刷新页面显示表格
-        status_container.empty()
-        st.rerun()
+                # 更新大进度条
+                progress_bar.progress((i + 1) / len(files_to_process))
+                time.sleep(0.5) # 稍微停顿，防止视觉跳变太快
+            
+            status_box.update(label="✅ 所有任务处理完毕！正在生成报表...", state="complete", expanded=False)
+            time.sleep(1)
+            st.rerun()
 
-    # --- 3. 数据渲染与表格 ---
+    # --- 3. 结果展示 ---
     table_data = []
-    has_failed_items = False
+    has_failed = False
     
     for file in uploaded_files:
         fid = f"{file.name}_{file.size}"
@@ -186,16 +193,14 @@ if uploaded_files:
         
         if cache and cache['status'] == 'success':
             res = cache['data']
-            try:
-                amt = float(str(res.get('Total', 0)).replace(',','').replace('元',''))
+            try: amt = float(str(res.get('Total', 0)).replace(',','').replace('元',''))
             except: amt = 0.0
             table_data.append({
                 "文件名": file.name, "日期": res.get('Date', ''), "项目": res.get('Item', ''), 
                 "金额": amt, "状态": "✅ 成功", "file_id": fid
             })
         elif cache and cache['status'] == 'failed':
-            has_failed_items = True
-            # 失败的文件也要显示在表格里！
+            has_failed = True
             table_data.append({
                 "文件名": file.name, "日期": "-", "项目": "-", 
                 "金额": 0.0, "状态": "❌ 失败", "file_id": fid
@@ -204,10 +209,10 @@ if uploaded_files:
     if table_data:
         df = pd.DataFrame(table_data)
         
-        # 顶部工具栏：如果有失败的，显示重试按钮
-        if has_failed_items:
+        # 失败重试入口
+        if has_failed:
             c1, c2 = st.columns([8, 2])
-            with c1: st.warning("⚠️ 部分发票识别失败，可能是网络波动，请点击右侧按钮重试。")
+            with c1: st.warning("⚠️ 部分发票识别失败，请点击右侧按钮重试。")
             with c2: 
                 if st.button("🔄 重试失败任务", type="primary", use_container_width=True):
                     st.rerun()
@@ -224,7 +229,7 @@ if uploaded_files:
             num_rows="dynamic", use_container_width=True, key="invoice_editor"
         )
         
-        # 同步删除与修改
+        # 同步操作
         current_ids = set(edited_df["file_id"])
         original_ids = set(df["file_id"])
         if len(current_ids) != len(original_ids):
@@ -236,11 +241,11 @@ if uploaded_files:
             if fid in st.session_state.invoice_cache and st.session_state.invoice_cache[fid]['status'] == 'success':
                  st.session_state.invoice_cache[fid]['data']['Total'] = row['金额']
 
-        # 底部布局：总金额与导出按钮
+        # 底部统计与导出
         total = edited_df[edited_df['状态'] == "✅ 成功"]['金额'].sum()
         
-        c_side1, c_main, c_side2 = st.columns([2.5, 5, 2.5])
-        with c_main:
+        col_s1, col_main, col_s2 = st.columns([2.5, 5, 2.5])
+        with col_main:
             inner_l, inner_r = st.columns([1.5, 1])
             with inner_l:
                 st.markdown(f"""
