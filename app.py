@@ -127,10 +127,14 @@ def on_table_change():
             # 1. 监听文件名修改
             if "文件名" in changes:
                 st.session_state.renamed_files[fid] = changes["文件名"]
-            # 2. 监听事项修改
-            if "事项" in changes:
-                st.session_state.descriptions[fid] = changes["事项"]
-            # 3. 监听金额修改 (字段名已变更为“报销金额”)
+            
+            # 2. 监听事项修改 (字段名已更新)
+            # 注意：这里的键名必须与 st.data_editor 中显示的列名完全一致
+            col_matter = "事项(什么时间干了什么)及备注"
+            if col_matter in changes:
+                st.session_state.descriptions[fid] = changes[col_matter]
+            
+            # 3. 监听金额修改 (字段名已更新)
             if "报销金额" in changes and fid in st.session_state.invoice_cache:
                 if st.session_state.invoice_cache[fid].get('status') == 'success':
                     st.session_state.invoice_cache[fid]['data']['Total'] = changes["报销金额"]
@@ -222,11 +226,11 @@ if uploaded_files:
                 except: amt = 0.0
                 table_data.append({
                     "报销人": reimburser_name,
-                    "报销金额": amt,              # 【修改点】金额放在第二列
+                    "报销金额": amt,
                     "文件名": name,
                     "日期": d.get('Date',''),
-                    "项目及备注": d.get('Item',''), # 【修改点】文案修改
-                    "事项": desc,
+                    "项目内容": d.get('Item',''), # 【修改点】字段名更新
+                    "事项(什么时间干了什么)及备注": desc, # 【修改点】字段名更新
                     "状态": "成功",
                     "file_id": fid
                 })
@@ -236,8 +240,8 @@ if uploaded_files:
                     "报销金额": 0.0,
                     "文件名": name,
                     "日期": "失败",
-                    "项目及备注": f"❌ {cache.get('error','识别超时')}",
-                    "事项": desc,
+                    "项目内容": f"❌ {cache.get('error','识别超时')}", # 【修改点】
+                    "事项(什么时间干了什么)及备注": desc, # 【修改点】
                     "状态": "失败",
                     "file_id": fid
                 })
@@ -260,16 +264,16 @@ if uploaded_files:
         df = pd.DataFrame(table_data)
         column_cfg = {
             "file_id": None, 
-            "报销金额": st.column_config.NumberColumn(format="%.2f"), # 对应新字段名
+            "报销金额": st.column_config.NumberColumn(format="%.2f"),
             "状态": st.column_config.TextColumn(disabled=True),
             "报销人": st.column_config.TextColumn(disabled=True, width="medium"), 
             "文件名": st.column_config.TextColumn(disabled=False),
-            "项目及备注": st.column_config.TextColumn(disabled=False), # 对应新字段名
-            "事项": st.column_config.TextColumn(disabled=False, width="large", help="请在此处补充具体事项说明")
+            "项目内容": st.column_config.TextColumn(disabled=False), 
+            "事项(什么时间干了什么)及备注": st.column_config.TextColumn(disabled=False, width="large", help="请填写具体事项")
         }
         
-        # 【修改点】列顺序调整：报销金额放到第二列
-        cols_order = ["报销人", "报销金额", "文件名", "日期", "项目及备注", "事项", "状态", "file_id"]
+        # 【修改点】列顺序调整，使用新文案
+        cols_order = ["报销人", "报销金额", "文件名", "日期", "项目内容", "事项(什么时间干了什么)及备注", "状态", "file_id"]
         df = df[cols_order]
         
         edited_df = st.data_editor(
@@ -281,7 +285,6 @@ if uploaded_files:
         )
         
         # === 底部合计与按钮区域 ===
-        # 计算总金额
         total_amt = df[df['状态'] == "成功"]['报销金额'].sum()
         
         out = io.BytesIO()
@@ -289,8 +292,7 @@ if uploaded_files:
         # 1. 剔除不需要导出的列 (file_id, 状态)
         exp_df = df.drop(columns=['file_id', '状态'])
         
-        # 2. 【修改点】构建 Excel 合计行
-        # 逻辑：第一列(报销人)填"合计"，第二列(报销金额)填数字，其余为空
+        # 2. 构建 Excel 合计行：第1列填“合计”，第2列填金额
         total_row = [''] * len(exp_df.columns)
         total_row[0] = '合计'      # 第1列：报销人 -> 合计
         total_row[1] = total_amt  # 第2列：报销金额 -> 数字
