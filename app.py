@@ -12,7 +12,6 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据截图 image_13406a.png 锁定模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -35,16 +34,15 @@ st.markdown("""
     .stat-fail { color: #dc3545; }
     .stat-time { color: #007bff; }
     
-    /* 2. 底部合计金额样式：去除多余的 margin-bottom 以便与按钮对齐 */
+    /* 2. 底部合计金额样式 */
     .total-display {
         font-size: 2.8rem;
         font-weight: 800;
         color: #1a1d21;
         display: flex;
         align-items: baseline;
-        justify-content: flex-end; /* 让文字靠右 */
-        line-height: 1.1;          /* 收紧行高，避免底部留白过多 */
-        margin-bottom: 5px;        /* 微调底部留白 */
+        justify-content: flex-end; 
+        line-height: 1.0;          /* 收紧行高，确保底部对齐基准线清晰 */
     }
     .total-label {
         font-size: 1.5rem;
@@ -53,7 +51,7 @@ st.markdown("""
         color: #495057;
     }
     
-    /* 3. 蓝色按钮样式 */
+    /* 3. 蓝色按钮样式修正：向下沉，实现底部对齐 */
     div.stDownloadButton > button {
         background-color: #007bff !important; 
         color: white !important; 
@@ -62,10 +60,11 @@ st.markdown("""
         width: auto !important;
         padding: 0.4rem 1.5rem !important;
         font-size: 0.95rem !important;
-        margin-bottom: 8px !important; /* 【关键】增加底部外边距，将其向上微调，避免沉底太深 */
+        /* 关键修改：向下偏移 15px，使其与大字体的底部对齐 */
+        transform: translateY(15px); 
         transition: all 0.3s ease;
     }
-    div.stDownloadButton > button:hover { background-color: #0056b3 !important; transform: translateY(-1px); }
+    div.stDownloadButton > button:hover { background-color: #0056b3 !important; transform: translateY(14px); }
     
     .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; }
     </style>
@@ -236,10 +235,9 @@ if uploaded_files:
         exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
         with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
 
-        # 核心布局：使用 [2, 5, 2] 比例居中
         col_left, col_center, col_right = st.columns([2, 5, 2])
         with col_center:
-            # 【关键修改】将对齐方式改为 bottom，让按钮下沉
+            # 关键：垂直对齐保持 bottom
             inner_c1, inner_c2 = st.columns([0.65, 0.35], vertical_alignment="bottom")
             with inner_c1:
                 st.markdown(f'''
@@ -249,8 +247,6 @@ if uploaded_files:
                     </div>
                 ''', unsafe_allow_html=True)
             with inner_c2:
-                # 按钮在 inner_c2 中，因 vertical_alignment="bottom" 会自动贴底
-                # 配合 CSS 的 margin-bottom: 8px 微调，实现视觉完美对齐
                 st.download_button(
                     label="导出 Excel", 
                     data=out.getvalue(), 
@@ -258,4 +254,4 @@ if uploaded_files:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 else:
-    st.info("👆 请上传发票文件。")
+    st.info("👆 请上传发票文件。系统将自动开启全速识别。")
