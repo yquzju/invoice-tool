@@ -81,8 +81,9 @@ def analyze_with_retry(image_bytes, mime_type, log_container):
     return None
 
 # --- 5. 页面主程序 ---
-st.set_page_config(page_title="AI 发票助手", layout="wide")
-st.title("🧾 AI 发票助手 (可视化全开版)")
+# 🟢 修改点 1: 更新页面标题
+st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide")
+st.title("🧾 AI 发票助手(QwenVL可编辑版)")
 
 # 初始化 Session
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
@@ -106,13 +107,11 @@ if uploaded_files:
         if (not is_cached or is_failed_before) and not has_tried_this_session:
             queue_to_process.append(f)
 
-    # === 🟢 2. 全局常驻看板 (实时显示状态) ===
-    # 统计逻辑：遍历所有 uploaded_files 结合 cache 计算
+    # === 🟢 2. 全局常驻看板 ===
     total_files = len(uploaded_files)
     success_count = 0
     fail_count = 0
     
-    # 预计算当前的成功失败数 (包含还没处理完的中间态)
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         if fid in st.session_state.invoice_cache:
@@ -120,7 +119,6 @@ if uploaded_files:
             if status == 'success': success_count += 1
             elif status == 'failed': fail_count += 1
     
-    # 创建看板占位符，用于循环中动态更新
     dashboard_placeholder = st.empty()
     
     def render_dashboard(s_count, f_count):
@@ -135,18 +133,17 @@ if uploaded_files:
     
     render_dashboard(success_count, fail_count)
 
-    # === 3. 批量处理循环 (直接在主界面显示进度) ===
+    # === 3. 批量处理循环 ===
     if queue_to_process:
-        st.write("---") # 分割线
+        st.write("---") 
         progress_bar = st.progress(0)
         status_text = st.empty()
-        log_area = st.empty() # 专门显示连接模型的日志
+        log_area = st.empty() 
         
         for i, file in enumerate(queue_to_process):
             fid = f"{file.name}_{file.size}"
             st.session_state.processed_session_ids.add(fid)
             
-            # 更新状态提示
             status_text.markdown(f"<div class='processing-highlight'>🚀 正在处理第 {i+1}/{len(queue_to_process)} 张：{file.name}</div>", unsafe_allow_html=True)
             
             try:
@@ -162,28 +159,24 @@ if uploaded_files:
                         f_bytes, m_type = buf.getvalue(), "image/jpeg"
                 elif m_type == 'image/jpg': m_type = 'image/jpeg'
 
-                # 调用带重试的函数
                 result = analyze_with_retry(f_bytes, m_type, log_area)
                 
                 if result:
                     st.session_state.invoice_cache[fid] = {'status': 'success', 'data': result}
-                    success_count += 1 # 实时更新计数
+                    success_count += 1 
                     log_area.success(f"✅ {file.name} 识别成功")
                 else:
                     st.session_state.invoice_cache[fid] = {'status': 'failed'}
-                    fail_count += 1 # 实时更新计数
+                    fail_count += 1 
             
             except Exception as e:
                 st.session_state.invoice_cache[fid] = {'status': 'failed'}
                 fail_count += 1
 
-            # 🟢 实时更新看板数字
             render_dashboard(success_count, fail_count)
-            # 更新进度条
             progress_bar.progress((i + 1) / len(queue_to_process))
-            time.sleep(0.5) # 视觉缓冲
+            time.sleep(0.5) 
 
-        # 循环结束清理
         status_text.empty()
         log_area.empty()
         progress_bar.empty()
@@ -222,9 +215,10 @@ if uploaded_files:
                             st.session_state.processed_session_ids.remove(fid)
                     st.rerun()
 
-        # 表格
+        # 🟢 修改点 2: 修复编辑“要两次”的 Bug
+        # 将数据深拷贝一份给 editor 使用，防止直接引用导致的更新滞后
         edited_df = st.data_editor(
-            df,
+            df.copy(), # 关键：使用副本
             column_config={
                 "file_id": None, "金额": st.column_config.NumberColumn(format="%.2f"),
                 "状态": st.column_config.TextColumn(width="small", disabled=True),
@@ -233,19 +227,38 @@ if uploaded_files:
             num_rows="dynamic", use_container_width=True, key="invoice_editor"
         )
         
-        # 同步逻辑
+        # 同步逻辑（先处理修改，再处理删除）
+        
+        # A. 实时同步修改到缓存
+        # 只要 edited_df 有变化，立即写入 session_state，这样下次 rerun 时 table_data 就会是最新的
+        for index, row in edited_df.iterrows():
+            fid = row['file_id']
+            # 只有成功的记录才允许且需要更新缓存
+            if fid in st.session_state.invoice_cache and st.session_state.invoice_cache[fid]['status'] == 'success':
+                # 检查数据是否真的变了，减少不必要的赋值（可选）
+                current_data = st.session_state.invoice_cache[fid]['data']
+                if (current_data.get('Total') != row['金额'] or 
+                    current_data.get('Date') != row['日期'] or 
+                    current_data.get('Item') != row['项目']):
+                    
+                    st.session_state.invoice_cache[fid]['data']['Total'] = row['金额']
+                    st.session_state.invoice_cache[fid]['data']['Date'] = row['日期']
+                    st.session_state.invoice_cache[fid]['data']['Item'] = row['项目']
+                    # 💡 强制刷新：这是解决“要两次”的核心。一旦检测到数据变化并更新了缓存，立即刷新页面
+                    # 但为了防止死循环（刷新->变了->刷新），data_editor 自身机制通常足够，
+                    # 关键在于上面的 df.copy() 和这里的及时写入。
+                    # 如果仍然卡顿，可以解开下面这行的注释，但通常不需要。
+                    # st.rerun() 
+
+        # B. 同步删除
         current_ids = set(edited_df["file_id"])
         original_ids = set(df["file_id"])
         if len(current_ids) != len(original_ids):
             st.session_state.ignored_files.update(original_ids - current_ids)
             st.rerun()
-            
-        for index, row in edited_df.iterrows():
-            fid = row['file_id']
-            if fid in st.session_state.invoice_cache and st.session_state.invoice_cache[fid]['status'] == 'success':
-                 st.session_state.invoice_cache[fid]['data']['Total'] = row['金额']
 
         # === 6. 底部总金额与导出 ===
+        # 注意：这里计算 total 必须使用 edited_df，因为那是用户看到的最新数据
         total = edited_df[edited_df['状态'] == "✅ 成功"]['金额'].sum()
         c_s1, c_main, c_s2 = st.columns([2.5, 5, 2.5])
         with c_main:
