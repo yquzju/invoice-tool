@@ -12,7 +12,6 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据截图修正的模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -131,10 +130,10 @@ def on_table_change():
             # 2. 监听事项修改
             if "事项" in changes:
                 st.session_state.descriptions[fid] = changes["事项"]
-            # 3. 监听金额修改
-            if "金额" in changes and fid in st.session_state.invoice_cache:
+            # 3. 监听金额修改 (字段名已变更为“报销金额”)
+            if "报销金额" in changes and fid in st.session_state.invoice_cache:
                 if st.session_state.invoice_cache[fid].get('status') == 'success':
-                    st.session_state.invoice_cache[fid]['data']['Total'] = changes["金额"]
+                    st.session_state.invoice_cache[fid]['data']['Total'] = changes["报销金额"]
 
 # --- 5. 主程序 ---
 st.title("AI 发票助手(QwenVL可编辑版)")
@@ -223,22 +222,22 @@ if uploaded_files:
                 except: amt = 0.0
                 table_data.append({
                     "报销人": reimburser_name,
+                    "报销金额": amt,              # 【修改点】金额放在第二列
                     "文件名": name,
                     "日期": d.get('Date',''),
-                    "项目": d.get('Item',''),
+                    "项目及备注": d.get('Item',''), # 【修改点】文案修改
                     "事项": desc,
-                    "金额": amt,
                     "状态": "成功",
                     "file_id": fid
                 })
             elif cache['status'] == 'failed':
                 table_data.append({
                     "报销人": reimburser_name,
+                    "报销金额": 0.0,
                     "文件名": name,
                     "日期": "失败",
-                    "项目": f"❌ {cache.get('error','识别超时')}",
+                    "项目及备注": f"❌ {cache.get('error','识别超时')}",
                     "事项": desc,
-                    "金额": 0.0,
                     "状态": "失败",
                     "file_id": fid
                 })
@@ -261,14 +260,16 @@ if uploaded_files:
         df = pd.DataFrame(table_data)
         column_cfg = {
             "file_id": None, 
-            "金额": st.column_config.NumberColumn(format="%.2f"),
+            "报销金额": st.column_config.NumberColumn(format="%.2f"), # 对应新字段名
             "状态": st.column_config.TextColumn(disabled=True),
             "报销人": st.column_config.TextColumn(disabled=True, width="medium"), 
             "文件名": st.column_config.TextColumn(disabled=False),
+            "项目及备注": st.column_config.TextColumn(disabled=False), # 对应新字段名
             "事项": st.column_config.TextColumn(disabled=False, width="large", help="请在此处补充具体事项说明")
         }
         
-        cols_order = ["报销人", "文件名", "日期", "项目", "事项", "金额", "状态", "file_id"]
+        # 【修改点】列顺序调整：报销金额放到第二列
+        cols_order = ["报销人", "报销金额", "文件名", "日期", "项目及备注", "事项", "状态", "file_id"]
         df = df[cols_order]
         
         edited_df = st.data_editor(
@@ -280,18 +281,19 @@ if uploaded_files:
         )
         
         # === 底部合计与按钮区域 ===
-        total_amt = df[df['状态'] == "成功"]['金额'].sum()
+        # 计算总金额
+        total_amt = df[df['状态'] == "成功"]['报销金额'].sum()
+        
         out = io.BytesIO()
         
-        # 【关键修改】 导出 Excel 时剔除 "状态" 和 "file_id"
+        # 1. 剔除不需要导出的列 (file_id, 状态)
         exp_df = df.drop(columns=['file_id', '状态'])
         
-        # 动态计算合计行位置
+        # 2. 【修改点】构建 Excel 合计行
+        # 逻辑：第一列(报销人)填"合计"，第二列(报销金额)填数字，其余为空
         total_row = [''] * len(exp_df.columns)
-        idx_item = exp_df.columns.get_loc("项目")
-        idx_amt = exp_df.columns.get_loc("金额")
-        total_row[idx_item] = '合计'
-        total_row[idx_amt] = total_amt
+        total_row[0] = '合计'      # 第1列：报销人 -> 合计
+        total_row[1] = total_amt  # 第2列：报销金额 -> 数字
         
         exp_df.loc[len(exp_df)] = total_row
         
