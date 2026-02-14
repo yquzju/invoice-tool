@@ -12,7 +12,7 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据截图更新的最新可用模型列表
+# 当前最新可用模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -25,14 +25,44 @@ st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wid
 
 st.markdown("""
     <style>
-    div.stDownloadButton > button { background-color: #007bff !important; color: white !important; border: none !important; border-radius: 8px !important; }
-    .dashboard-box { padding: 15px; border-radius: 10px; background-color: #f8f9fa; border: 1px solid #e9ecef; margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    /* 1. 蓝色按钮：取消固定宽度，根据文案自动调整 */
+    div.stDownloadButton > button {
+        background-color: #007bff !important; 
+        color: white !important; 
+        border: none !important; 
+        border-radius: 8px !important;
+        width: auto !important; /* 宽度自适应 */
+        padding: 0.5rem 2rem !important; /* 增加一点左右内边距 */
+        min-width: 120px !important;
+    }
+    div.stDownloadButton > button:hover { background-color: #0056b3 !important; }
+    
+    /* 2. 顶部统计看板样式 */
+    .dashboard-box {
+        padding: 15px; border-radius: 10px; background-color: #f8f9fa; border: 1px solid #e9ecef;
+        margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
     .stat-item { font-size: 16px; font-weight: 600; }
     .stat-success { color: #28a745; }
     .stat-fail { color: #dc3545; }
     .stat-time { color: #007bff; }
-    .total-container { display: flex; align-items: baseline; justify-content: flex-end; gap: 15px; margin-top: 20px; }
-    .total-value { font-size: 2rem; font-weight: 700; color: #212529; }
+    
+    /* 3. 底部合计栏布局：确保金额和按钮紧挨并水平居中 */
+    .footer-container {
+        display: flex;
+        justify-content: center; /* 水平居中 */
+        align-items: center;     /* 垂直居中 */
+        gap: 25px;               /* 金额与按钮的间距 */
+        width: 100%;
+        margin-top: 30px;
+        padding: 20px 0;
+    }
+    .total-value {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: #212529;
+        margin: 0;
+    }
     .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
@@ -99,16 +129,8 @@ uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg',
 if uploaded_files:
     dash_placeholder = st.empty()
     def render_live_stats(live_duration=None):
-        s_count = 0
-        f_count = 0
-        for f in uploaded_files:
-            fid = f"{f.name}_{f.size}"
-            cache = st.session_state.invoice_cache.get(fid)
-            if cache:
-                if cache['status'] == 'success': s_count += 1
-                elif cache['status'] == 'failed': f_count += 1
-        
-        # 使用传入的实时时长，或者使用 session 中保存的最终时长
+        s_count = sum(1 for f in uploaded_files if st.session_state.invoice_cache.get(f"{f.name}_{f.size}", {}).get('status') == 'success')
+        f_count = sum(1 for f in uploaded_files if st.session_state.invoice_cache.get(f"{f.name}_{f.size}", {}).get('status') == 'failed')
         final_time = live_duration if live_duration is not None else st.session_state.overall_duration
         
         dash_placeholder.markdown(f"""
@@ -129,8 +151,6 @@ if uploaded_files:
         prog = st.progress(0)
         status_txt = st.empty()
         log_area = st.empty()
-        
-        # 整体耗时起点
         task_start_time = time.time()
         
         for i, file in enumerate(queue):
@@ -143,9 +163,7 @@ if uploaded_files:
                 file.seek(0)
                 f_bytes = file.read()
                 m_type = file.type
-                
                 if m_type == "application/pdf":
-                    log_area.caption("📄 PDF 正在转码...")
                     images = convert_from_bytes(f_bytes)
                     if images:
                         buf = io.BytesIO()
@@ -153,7 +171,6 @@ if uploaded_files:
                         f_bytes, m_type = buf.getvalue(), "image/jpeg"
                 
                 res, err_msg = call_api_once(f_bytes, m_type, log_area)
-                
                 if res:
                     st.session_state.invoice_cache[fid] = {'status': 'success', 'data': res}
                 else:
@@ -161,26 +178,20 @@ if uploaded_files:
             except Exception as e:
                 st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': str(e)}
             
-            # 计算当前整体耗时并实时更新看板
             current_elapsed = time.time() - task_start_time
             render_live_stats(current_elapsed)
             prog.progress((i + 1) / len(queue))
             time.sleep(1.2)
         
-        # 保存整个任务的最终耗时
         st.session_state.overall_duration = time.time() - task_start_time
-        status_txt.empty()
-        prog.empty()
-        log_area.empty()
         st.rerun()
 
-    # 数据表格展示
+    # 数据准备
     table_data = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         name = st.session_state.renamed_files.get(fid, f.name)
         cache = st.session_state.invoice_cache.get(fid)
-        
         if cache:
             if cache['status'] == 'success':
                 d = cache['data']
@@ -220,15 +231,32 @@ if uploaded_files:
             on_change=on_table_change
         )
         
+        # === 6. 底部合计与按钮优化区 ===
         total_amt = sum(r['金额'] for r in table_data if r['状态'] == '成功')
-        bc1, bc2 = st.columns([7, 3])
-        with bc1:
-            st.markdown(f'<div class="total-container"><span class="total-value">合计: {total_amt:,.2f}</span></div>', unsafe_allow_html=True)
-        with bc2:
-            out = io.BytesIO()
-            exp_df = df.drop(columns=['file_id'])
-            exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
-            with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
-            st.download_button("导出 Excel", out.getvalue(), "发票汇总.xlsx", use_container_width=True)
+        
+        # 使用 3 列布局：左边留白，中间对齐，右边留白，从而实现整体居中
+        # 4:4:4 或 3:6:3 的比例可以让中间区域足够宽
+        empty_l, center_content, empty_r = st.columns([3, 6, 3])
+        
+        with center_content:
+            # 内部再次分割，让金额和按钮紧靠在一起并居中
+            # 这里的比例 0.6:0.4 确保金额在左，按钮在右，且由于外部 column 已居中，这里也会居中
+            sub_c1, sub_c2 = st.columns([0.65, 0.35])
+            with sub_c1:
+                st.markdown(f'<p class="total-value" style="text-align: right;">合计: {total_amt:,.2f}</p>', unsafe_allow_html=True)
+            with sub_c2:
+                # 导出 Excel 准备
+                out = io.BytesIO()
+                exp_df = df.drop(columns=['file_id'])
+                exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
+                with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
+                
+                # 注意：此处没有设置 use_container_width=True，按钮将保持 CSS 定义的自适应宽度
+                st.download_button(
+                    label="导出 Excel", 
+                    data=out.getvalue(), 
+                    file_name="发票汇总.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 else:
-    st.info("👆 请上传发票文件。系统将自动统计整体处理时长。")
+    st.info("👆 请上传发票文件。")
