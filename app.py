@@ -10,28 +10,29 @@ from pdf2image import convert_from_bytes
 import time
 
 # --- 1. 配置区域 ---
-API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw" [cite: 1]
-API_URL = "https://api.siliconflow.cn/v1/chat/completions" [cite: 1]
+API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
+API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+# 根据截图 image_13406a.png 修正的模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
     "zai-org/GLM-4.5V",
     "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
-] [cite: 1]
+]
 
 # --- 2. 页面设置与样式美化 ---
-st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide") [cite: 14]
+st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide")
 
 st.markdown("""
     <style>
-    /* 1. 精致型下载按钮 */
+    /* 1. 精致型下载按钮：宽度自适应文案 */
     div.stDownloadButton > button {
         background-color: #007bff !important; 
         color: white !important; 
         border: none !important; 
         border-radius: 6px !important;
         width: auto !important;
-        padding: 0.4rem 1.2rem !important; /* 缩小按钮尺寸 */
+        padding: 0.4rem 1.2rem !important;
         font-size: 0.95rem !important;
         transition: all 0.3s ease;
     }
@@ -40,27 +41,27 @@ st.markdown("""
     /* 2. 顶部统计看板 */
     .dashboard-box {
         padding: 15px; border-radius: 10px; background-color: #f8f9fa; border: 1px solid #e9ecef;
-        margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); [cite: 5, 6]
+        margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
-    .stat-item { font-size: 16px; font-weight: 600; } [cite: 7]
-    .stat-success { color: #28a745; } [cite: 8]
-    .stat-fail { color: #dc3545; } [cite: 8]
+    .stat-item { font-size: 16px; font-weight: 600; }
+    .stat-success { color: #28a745; }
+    .stat-fail { color: #dc3545; }
     .stat-time { color: #007bff; }
     
-    /* 3. 底部合计区域美化 (核心修改) */
+    /* 3. 底部合计区域：加粗、放大并水平居中 */
     .footer-flex-container {
         display: flex;
         justify-content: center;
-        align-items: center;     /* 垂直方向居中对齐 */
-        gap: 30px;               /* 文字与按钮的间距 */
+        align-items: center;
+        gap: 30px;
         margin-top: 35px;
         padding: 25px 0;
     }
     .total-highlight {
-        font-size: 2.6rem;       /* 放大显示 */
-        font-weight: 800;        /* 极致加粗 */
+        font-size: 2.6rem;
+        font-weight: 800;
         color: #1a1d21;
-        letter-spacing: -1px;    /* 紧凑感 */
+        letter-spacing: -1px;
         margin: 0;
         display: flex;
         align-items: baseline;
@@ -71,13 +72,13 @@ st.markdown("""
         margin-right: 12px;
         color: #495057;
     }
-    .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; } [cite: 9]
+    .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- 3. 初始化 ---
-if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {} [cite: 16]
-if 'processed_session_ids' not in st.session_state: st.session_state.processed_session_ids = set() [cite: 19]
+if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
+if 'processed_session_ids' not in st.session_state: st.session_state.processed_session_ids = set()
 if 'renamed_files' not in st.session_state: st.session_state.renamed_files = {} 
 if 'overall_duration' not in st.session_state: st.session_state.overall_duration = 0.0
 
@@ -88,11 +89,11 @@ if 'http_session' not in st.session_state:
     session.mount('https://', adapter)
     st.session_state.http_session = session
 
-# --- 4. 功能函数 ---
+# --- 4. 核心功能函数 ---
 def call_api_once(image_bytes, mime_type, log_placeholder):
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
-    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"} [cite: 11]
-    prompt = "Extract invoice data into JSON... JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}" [cite: 10]
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    prompt = "Extract invoice data into JSON: 1.Item (Name), 2.Date (YYYY-MM-DD), 3.Total (Grand Total including tax/价税合计). JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"
 
     last_error = ""
     for model in CANDIDATE_MODELS:
@@ -103,12 +104,12 @@ def call_api_once(image_bytes, mime_type, log_placeholder):
             "max_tokens": 512, "temperature": 0.1
         }
         try:
-            resp = st.session_state.http_session.post(API_URL, headers=headers, json=data, timeout=60) [cite: 11]
+            resp = st.session_state.http_session.post(API_URL, headers=headers, json=data, timeout=60)
             if resp.status_code == 200:
                 content = resp.json()['choices'][0]['message']['content']
                 clean = content.replace("```json", "").replace("```", "").strip()
                 s, e = clean.find('{'), clean.rfind('}') + 1
-                return json.loads(clean[s:e]), None [cite: 12]
+                return json.loads(clean[s:e]), None
             else:
                 last_error = f"HTTP {resp.status_code}: {resp.json().get('message', '未知错误')}"
         except Exception as e:
@@ -127,12 +128,12 @@ def on_table_change():
                 st.session_state.renamed_files[fid] = changes["文件名"]
             if "金额" in changes and fid in st.session_state.invoice_cache:
                 if st.session_state.invoice_cache[fid].get('status') == 'success':
-                    st.session_state.invoice_cache[fid]['data']['Total'] = changes["金额"] [cite: 33]
+                    st.session_state.invoice_cache[fid]['data']['Total'] = changes["金额"]
 
 # --- 5. 主程序 ---
 st.title("AI 发票助手(QwenVL可编辑版)")
 
-uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True) [cite: 14]
+uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
 if uploaded_files:
     dash_placeholder = st.empty()
@@ -143,17 +144,17 @@ if uploaded_files:
         
         dash_placeholder.markdown(f"""
             <div class="dashboard-box">
-                <div class="stat-item">文件总数: {len(uploaded_files)}</div> [cite: 17]
+                <div class="stat-item">文件总数: {len(uploaded_files)}</div>
                 <div class="stat-item stat-success">识别成功: {s_count}</div>
                 <div class="stat-item stat-fail">识别失败: {f_count}</div>
                 <div class="stat-item" style="color:#666">待处理: {len(uploaded_files)-s_count-f_count}</div>
                 <div class="stat-item stat-time">整体耗时: {final_time:.1f}s</div>
             </div>
-        """, unsafe_allow_html=True) [cite: 18]
+        """, unsafe_allow_html=True)
 
     render_live_stats()
 
-    queue = [f for f in uploaded_files if f"{f.name}_{f.size}" not in st.session_state.processed_session_ids and st.session_state.invoice_cache.get(f"{f.name}_{f.size}", {}).get('status') != 'success'] [cite: 15]
+    queue = [f for f in uploaded_files if f"{f.name}_{f.size}" not in st.session_state.processed_session_ids and st.session_state.invoice_cache.get(f"{f.name}_{f.size}", {}).get('status') != 'success']
     
     if queue:
         prog = st.progress(0)
@@ -163,52 +164,52 @@ if uploaded_files:
         
         for i, file in enumerate(queue):
             fid = f"{file.name}_{file.size}"
-            st.session_state.processed_session_ids.add(fid) [cite: 19]
+            st.session_state.processed_session_ids.add(fid)
             d_name = st.session_state.renamed_files.get(fid, file.name)
             status_txt.markdown(f"<div class='processing-highlight'>正在处理 ({i+1}/{len(queue)}): {d_name}</div>", unsafe_allow_html=True)
             
             try:
                 file.seek(0)
-                f_bytes = file.read() [cite: 20]
+                f_bytes = file.read()
                 m_type = file.type
                 if m_type == "application/pdf":
-                    images = convert_from_bytes(f_bytes) [cite: 21]
+                    images = convert_from_bytes(f_bytes)
                     if images:
                         buf = io.BytesIO()
                         images[0].save(buf, format="JPEG")
                         f_bytes, m_type = buf.getvalue(), "image/jpeg"
-                elif m_type == 'image/jpg': m_type = 'image/jpeg' [cite: 22]
+                elif m_type == 'image/jpg': m_type = 'image/jpeg'
                 
                 res, err_msg = call_api_once(f_bytes, m_type, log_area)
                 if res:
-                    st.session_state.invoice_cache[fid] = {'status': 'success', 'data': res} [cite: 23]
+                    st.session_state.invoice_cache[fid] = {'status': 'success', 'data': res}
                 else:
-                    st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': err_msg} [cite: 24]
+                    st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': err_msg}
             except Exception as e:
                 st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': str(e)}
             
             current_elapsed = time.time() - task_start_time
-            render_live_stats(current_elapsed) [cite: 25]
+            render_live_stats(current_elapsed)
             prog.progress((i + 1) / len(queue))
             time.sleep(1.2)
         
         st.session_state.overall_duration = time.time() - task_start_time
         st.rerun()
 
-    # 表格数据
-    table_data = [] [cite: 26]
+    # 表格数据准备
+    table_data = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         name = st.session_state.renamed_files.get(fid, f.name)
         cache = st.session_state.invoice_cache.get(fid)
         if cache:
             if cache['status'] == 'success':
-                d = cache['data'] [cite: 27]
+                d = cache['data']
                 try: amt = float(str(d.get('Total', 0)).replace(',','').replace('元',''))
                 except: amt = 0.0
                 table_data.append({"文件名": name, "日期": d.get('Date',''), "项目": d.get('Item',''), "金额": amt, "状态": "成功", "file_id": fid})
             elif cache['status'] == 'failed':
-                table_data.append({"文件名": name, "日期": "失败", "项目": f"❌ {cache.get('error','识别超时')}", "金额": 0.0, "状态": "失败", "file_id": fid}) [cite: 28]
+                table_data.append({"文件名": name, "日期": "失败", "项目": f"❌ {cache.get('error','识别超时')}", "金额": 0.0, "状态": "失败", "file_id": fid})
 
     st.session_state.current_table_data = table_data
     
@@ -217,31 +218,29 @@ if uploaded_files:
         failed_count = sum(1 for r in table_data if r['状态'] == '失败')
         if failed_count > 0:
             c1, c2 = st.columns([8, 2])
-            with c1: st.warning(f"当前有 {failed_count} 个发票识别失败。") [cite: 29]
+            with c1: st.warning(f"当前有 {failed_count} 个发票识别失败。")
             with c2:
-                if st.button("🔄 重试失败任务", type="primary", use_container_width=True):
+                if st.button("🔄 重试所有未完成任务", type="primary", use_container_width=True):
                     for r in table_data:
                         if r['状态'] == '失败':
-                            st.session_state.processed_session_ids.discard(r['file_id']) [cite: 30]
+                            st.session_state.processed_session_ids.discard(r['file_id'])
                     st.rerun()
 
+        df = pd.DataFrame(table_data)
         edited = st.data_editor(
-            pd.DataFrame(table_data),
+            df,
             column_config={
                 "file_id": None, "金额": st.column_config.NumberColumn(format="%.2f"),
                 "状态": st.column_config.TextColumn(disabled=True),
                 "文件名": st.column_config.TextColumn(disabled=False)
             },
-            use_container_width=True, key="invoice_editor", on_change=on_table_change [cite: 31]
+            use_container_width=True, key="invoice_editor", on_change=on_table_change
         )
         
         # --- 6. 底部合计与导出 (UI 精修区) ---
-        total_amt = sum(r['金额'] for r in table_data if r['状态'] == '成功') [cite: 34]
+        total_amt = sum(r['金额'] for r in table_data if r['状态'] == '成功')
         
-        # 使用自定义容器实现居中且紧凑的布局
         st.write('<div class="footer-flex-container">', unsafe_allow_html=True)
-        
-        # 金额显示
         st.markdown(f'''
             <div class="total-highlight">
                 <span class="total-label-small">合计</span>
@@ -249,11 +248,10 @@ if uploaded_files:
             </div>
         ''', unsafe_allow_html=True)
         
-        # 按钮导出
         out = io.BytesIO()
         exp_df = pd.DataFrame(table_data).drop(columns=['file_id'])
         exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
-        with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False) [cite: 35]
+        with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
         
         st.download_button(
             label="导出 Excel", 
@@ -261,7 +259,6 @@ if uploaded_files:
             file_name="发票汇总.xlsx", 
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        
         st.write('</div>', unsafe_allow_html=True)
 else:
     st.info("👆 请上传发票文件。系统将自动统计整体处理时长并汇总金额。")
