@@ -12,12 +12,12 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据最新截图更新模型列表
+# 根据截图更新的最新可用模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
     "zai-org/GLM-4.5V",
-    "Qwen/Qwen2.5-VL-7B-Instruct"
+    "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
 ]
 
 # --- 2. 页面设置 ---
@@ -41,6 +41,7 @@ st.markdown("""
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
 if 'processed_session_ids' not in st.session_state: st.session_state.processed_session_ids = set()
 if 'renamed_files' not in st.session_state: st.session_state.renamed_files = {} 
+if 'overall_duration' not in st.session_state: st.session_state.overall_duration = 0.0
 
 if 'http_session' not in st.session_state:
     session = requests.Session()
@@ -97,29 +98,26 @@ uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg',
 
 if uploaded_files:
     dash_placeholder = st.empty()
-    def render_live_stats():
+    def render_live_stats(live_duration=None):
         s_count = 0
         f_count = 0
-        durations = []
         for f in uploaded_files:
             fid = f"{f.name}_{f.size}"
             cache = st.session_state.invoice_cache.get(fid)
             if cache:
-                if cache['status'] == 'success': 
-                    s_count += 1
-                    if 'duration' in cache: durations.append(cache['duration'])
-                elif cache['status'] == 'failed': 
-                    f_count += 1
+                if cache['status'] == 'success': s_count += 1
+                elif cache['status'] == 'failed': f_count += 1
         
-        avg_time = sum(durations) / len(durations) if durations else 0
+        # 使用传入的实时时长，或者使用 session 中保存的最终时长
+        final_time = live_duration if live_duration is not None else st.session_state.overall_duration
         
         dash_placeholder.markdown(f"""
             <div class="dashboard-box">
                 <div class="stat-item">文件总数: {len(uploaded_files)}</div>
                 <div class="stat-item stat-success">识别成功: {s_count}</div>
                 <div class="stat-item stat-fail">识别失败: {f_count}</div>
-                <div class="stat-item stat-time">平均耗时: {avg_time:.1f}s</div>
                 <div class="stat-item" style="color:#666">待处理: {len(uploaded_files)-s_count-f_count}</div>
+                <div class="stat-item stat-time">整体耗时: {final_time:.1f}s</div>
             </div>
         """, unsafe_allow_html=True)
 
@@ -132,14 +130,14 @@ if uploaded_files:
         status_txt = st.empty()
         log_area = st.empty()
         
+        # 整体耗时起点
+        task_start_time = time.time()
+        
         for i, file in enumerate(queue):
             fid = f"{file.name}_{file.size}"
             st.session_state.processed_session_ids.add(fid)
             d_name = st.session_state.renamed_files.get(fid, file.name)
             status_txt.markdown(f"<div class='processing-highlight'>正在处理 ({i+1}/{len(queue)}): {d_name}</div>", unsafe_allow_html=True)
-            
-            # --- 开始计时 ---
-            start_proc = time.time()
             
             try:
                 file.seek(0)
@@ -156,41 +154,42 @@ if uploaded_files:
                 
                 res, err_msg = call_api_once(f_bytes, m_type, log_area)
                 
-                proc_duration = time.time() - start_proc # 计算耗时
-                
                 if res:
-                    st.session_state.invoice_cache[fid] = {'status': 'success', 'data': res, 'duration': proc_duration}
+                    st.session_state.invoice_cache[fid] = {'status': 'success', 'data': res}
                 else:
-                    st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': err_msg, 'duration': proc_duration}
+                    st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': err_msg}
             except Exception as e:
-                st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': str(e), 'duration': time.time() - start_proc}
+                st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': str(e)}
             
-            render_live_stats()
+            # 计算当前整体耗时并实时更新看板
+            current_elapsed = time.time() - task_start_time
+            render_live_stats(current_elapsed)
             prog.progress((i + 1) / len(queue))
             time.sleep(1.2)
         
+        # 保存整个任务的最终耗时
+        st.session_state.overall_duration = time.time() - task_start_time
         status_txt.empty()
         prog.empty()
         log_area.empty()
         st.rerun()
 
-    # 数据表格准备
+    # 数据表格展示
     table_data = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         name = st.session_state.renamed_files.get(fid, f.name)
         cache = st.session_state.invoice_cache.get(fid)
-        duration = cache.get('duration', 0) if cache else 0
         
         if cache:
             if cache['status'] == 'success':
                 d = cache['data']
                 try: amt = float(str(d.get('Total', 0)).replace(',','').replace('元',''))
                 except: amt = 0.0
-                table_data.append({"文件名": name, "日期": d.get('Date',''), "项目": d.get('Item',''), "金额": amt, "耗时(s)": round(duration, 1), "状态": "成功", "file_id": fid})
+                table_data.append({"文件名": name, "日期": d.get('Date',''), "项目": d.get('Item',''), "金额": amt, "状态": "成功", "file_id": fid})
             elif cache['status'] == 'failed':
                 err_info = cache.get('error', '识别超时')
-                table_data.append({"文件名": name, "日期": "失败", "项目": f"❌ {err_info}", "金额": 0.0, "耗时(s)": round(duration, 1), "状态": "失败", "file_id": fid})
+                table_data.append({"文件名": name, "日期": "失败", "项目": f"❌ {err_info}", "金额": 0.0, "状态": "失败", "file_id": fid})
 
     st.session_state.current_table_data = table_data
     
@@ -213,7 +212,6 @@ if uploaded_files:
             column_config={
                 "file_id": None,
                 "金额": st.column_config.NumberColumn(format="%.2f"),
-                "耗时(s)": st.column_config.NumberColumn(format="%.1f", disabled=True),
                 "状态": st.column_config.TextColumn(disabled=True),
                 "文件名": st.column_config.TextColumn(disabled=False)
             },
@@ -229,8 +227,8 @@ if uploaded_files:
         with bc2:
             out = io.BytesIO()
             exp_df = df.drop(columns=['file_id'])
-            exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '', '']
+            exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
             with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
             st.download_button("导出 Excel", out.getvalue(), "发票汇总.xlsx", use_container_width=True)
 else:
-    st.info("👆 请上传发票文件。系统将统计识别效率并自动计算总额。")
+    st.info("👆 请上传发票文件。系统将自动统计整体处理时长。")
