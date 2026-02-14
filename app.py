@@ -12,7 +12,7 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据最新的模型列表进行锁定
+# 根据截图 image_13406a.png 锁定模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -25,7 +25,7 @@ st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wid
 
 st.markdown("""
     <style>
-    /* 顶部统计看板 */
+    /* 1. 顶部统计看板 */
     .dashboard-box {
         padding: 15px; border-radius: 10px; background-color: #f8f9fa; border: 1px solid #e9ecef;
         margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -35,14 +35,16 @@ st.markdown("""
     .stat-fail { color: #dc3545; }
     .stat-time { color: #007bff; }
     
-    /* 底部合计金额样式：加粗并放大 */
+    /* 2. 底部合计金额样式：去除多余的 margin-bottom 以便与按钮对齐 */
     .total-display {
         font-size: 2.8rem;
         font-weight: 800;
         color: #1a1d21;
         display: flex;
         align-items: baseline;
-        justify-content: flex-end; /* 让文字靠右，与右侧列的按钮对接 */
+        justify-content: flex-end; /* 让文字靠右 */
+        line-height: 1.1;          /* 收紧行高，避免底部留白过多 */
+        margin-bottom: 5px;        /* 微调底部留白 */
     }
     .total-label {
         font-size: 1.5rem;
@@ -51,7 +53,7 @@ st.markdown("""
         color: #495057;
     }
     
-    /* 蓝色按钮：自适应宽度 */
+    /* 3. 蓝色按钮样式 */
     div.stDownloadButton > button {
         background-color: #007bff !important; 
         color: white !important; 
@@ -60,9 +62,11 @@ st.markdown("""
         width: auto !important;
         padding: 0.4rem 1.5rem !important;
         font-size: 0.95rem !important;
+        margin-bottom: 8px !important; /* 【关键】增加底部外边距，将其向上微调，避免沉底太深 */
         transition: all 0.3s ease;
     }
     div.stDownloadButton > button:hover { background-color: #0056b3 !important; transform: translateY(-1px); }
+    
     .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
@@ -186,7 +190,6 @@ if uploaded_files:
         st.session_state.overall_duration = time.time() - task_start_time
         st.rerun()
 
-    # 表格准备
     table_data = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
@@ -204,7 +207,6 @@ if uploaded_files:
     st.session_state.current_table_data = table_data
     if table_data:
         st.divider()
-        # 失败手动重试区
         failed_rows = len([x for x in table_data if x['状态'] == "失败"])
         if failed_rows > 0:
             c1, c2 = st.columns([8, 2])
@@ -216,7 +218,6 @@ if uploaded_files:
                             st.session_state.processed_session_ids.discard(r['file_id'])
                     st.rerun()
 
-        # 数据编辑器
         df = pd.DataFrame(table_data)
         edited_df = st.data_editor(
             df,
@@ -228,21 +229,19 @@ if uploaded_files:
             use_container_width=True, key="invoice_editor", on_change=on_table_change
         )
         
-        # === 6. 底部合计与导出 (UI 修复区：单行、居中、无重复) ===
+        # === 底部合计与按钮区域 ===
         total_amt = df[df['状态'] == "成功"]['金额'].sum()
-        
-        # 准备导出数据
         out = io.BytesIO()
         exp_df = df.drop(columns=['file_id'])
         exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
         with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
 
-        # 核心布局：利用 columns 比例 [2, 5, 2] 实现居中效果，内部子列 [0.65, 0.35] 实现文本按钮紧贴
+        # 核心布局：使用 [2, 5, 2] 比例居中
         col_left, col_center, col_right = st.columns([2, 5, 2])
         with col_center:
-            inner_c1, inner_c2 = st.columns([0.65, 0.35], vertical_alignment="center")
+            # 【关键修改】将对齐方式改为 bottom，让按钮下沉
+            inner_c1, inner_c2 = st.columns([0.65, 0.35], vertical_alignment="bottom")
             with inner_c1:
-                # 仅在此处调用一次显示逻辑
                 st.markdown(f'''
                     <div class="total-display">
                         <span class="total-label">合计</span>
@@ -250,7 +249,8 @@ if uploaded_files:
                     </div>
                 ''', unsafe_allow_html=True)
             with inner_c2:
-                # 按钮紧随其后
+                # 按钮在 inner_c2 中，因 vertical_alignment="bottom" 会自动贴底
+                # 配合 CSS 的 margin-bottom: 8px 微调，实现视觉完美对齐
                 st.download_button(
                     label="导出 Excel", 
                     data=out.getvalue(), 
@@ -258,4 +258,4 @@ if uploaded_files:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 else:
-    st.info("👆 请上传发票文件。系统将自动开启全速识别。")
+    st.info("👆 请上传发票文件。")
