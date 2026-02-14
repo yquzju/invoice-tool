@@ -19,8 +19,43 @@ CANDIDATE_MODELS = [
     "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
 ]
 
-# --- 2. 页面设置与 CSS 样式 ---
+# --- 2. 页面基础设置 (必须是第一个 Streamlit 命令) ---
 st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide")
+
+# ==========================================
+# 🔐 安全登录拦截区
+# ==========================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("""
+        <style>
+        .stTextInput input { font-size: 1.2rem; }
+        div.stButton > button { width: 100%; font-size: 1.2rem; font-weight: bold; background-color: #007bff; color: white; }
+        div.stButton > button:hover { background-color: #0056b3; color: white; }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.title("🔐 系统登录")
+        st.write("内部系统，请输入访问密码")
+        
+        password_input = st.text_input("密码", type="password", label_visibility="collapsed", placeholder="在此输入密码...")
+        
+        if st.button("立即登录"):
+            if password_input == "MuseGate0807":
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("🚫 密码错误，请重试")
+    
+    st.stop() # 🛑 密码未通过时，强制停止加载后续代码
+
+# ==========================================
+# ✅ 验证通过，加载主程序
+# ==========================================
 
 st.markdown("""
     <style>
@@ -128,19 +163,23 @@ def on_table_change():
             if "文件名" in changes:
                 st.session_state.renamed_files[fid] = changes["文件名"]
             
-            # 2. 监听事项修改 (字段名已更新)
-            # 注意：这里的键名必须与 st.data_editor 中显示的列名完全一致
+            # 2. 监听事项修改
             col_matter = "事项(什么时间干了什么)及备注"
             if col_matter in changes:
                 st.session_state.descriptions[fid] = changes[col_matter]
             
-            # 3. 监听金额修改 (字段名已更新)
+            # 3. 监听金额修改
             if "报销金额" in changes and fid in st.session_state.invoice_cache:
                 if st.session_state.invoice_cache[fid].get('status') == 'success':
                     st.session_state.invoice_cache[fid]['data']['Total'] = changes["报销金额"]
 
 # --- 5. 主程序 ---
 st.title("AI 发票助手(QwenVL可编辑版)")
+
+# 退出登录按钮 (放在右上角或标题下方)
+if st.button("🔒 退出登录", type="secondary"):
+    st.session_state.authenticated = False
+    st.rerun()
 
 uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
 
@@ -229,8 +268,8 @@ if uploaded_files:
                     "报销金额": amt,
                     "文件名": name,
                     "日期": d.get('Date',''),
-                    "项目内容": d.get('Item',''), # 【修改点】字段名更新
-                    "事项(什么时间干了什么)及备注": desc, # 【修改点】字段名更新
+                    "项目内容": d.get('Item',''),
+                    "事项(什么时间干了什么)及备注": desc,
                     "状态": "成功",
                     "file_id": fid
                 })
@@ -240,8 +279,8 @@ if uploaded_files:
                     "报销金额": 0.0,
                     "文件名": name,
                     "日期": "失败",
-                    "项目内容": f"❌ {cache.get('error','识别超时')}", # 【修改点】
-                    "事项(什么时间干了什么)及备注": desc, # 【修改点】
+                    "项目内容": f"❌ {cache.get('error','识别超时')}",
+                    "事项(什么时间干了什么)及备注": desc,
                     "状态": "失败",
                     "file_id": fid
                 })
@@ -272,7 +311,6 @@ if uploaded_files:
             "事项(什么时间干了什么)及备注": st.column_config.TextColumn(disabled=False, width="large", help="请填写具体事项")
         }
         
-        # 【修改点】列顺序调整，使用新文案
         cols_order = ["报销人", "报销金额", "文件名", "日期", "项目内容", "事项(什么时间干了什么)及备注", "状态", "file_id"]
         df = df[cols_order]
         
@@ -288,15 +326,10 @@ if uploaded_files:
         total_amt = df[df['状态'] == "成功"]['报销金额'].sum()
         
         out = io.BytesIO()
-        
-        # 1. 剔除不需要导出的列 (file_id, 状态)
         exp_df = df.drop(columns=['file_id', '状态'])
-        
-        # 2. 构建 Excel 合计行：第1列填“合计”，第2列填金额
         total_row = [''] * len(exp_df.columns)
-        total_row[0] = '合计'      # 第1列：报销人 -> 合计
-        total_row[1] = total_amt  # 第2列：报销金额 -> 数字
-        
+        total_row[0] = '合计'
+        total_row[1] = total_amt
         exp_df.loc[len(exp_df)] = total_row
         
         with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
