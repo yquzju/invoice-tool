@@ -59,36 +59,53 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def analyze_image_auto_switch(image_bytes, mime_type):
+    """自动轮询模型，直到成功"""
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # 🟢 核心优化：修改 Prompt，明确要求提取“价税合计”
+    # 这样模型在面对有“金额”和“价税合计”两个数值的发票时，就不会搞错了
+    prompt_text = (
+        "Extract invoice data into JSON: "
+        "1. Item (Product Name/项目名称) "
+        "2. Date (YYYY-MM-DD) "
+        "3. Total Amount (Total tax included/价税合计小写/总金额). " # 👈 强制指令
+        "JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"
+    )
+
     for model_name in CANDIDATE_MODELS:
         status_placeholder = st.empty()
-        status_placeholder.caption(f" 正在尝试: {model_name} ...")
+        status_placeholder.caption(f"🔄 正在尝试: {model_name} ...")
+        
         data = {
             "model": model_name,
             "messages": [{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Extract invoice data into JSON: 1.Item 2.Date 3.Total. JSON format: {\"Item\":\"x\",\"Date\":\"x\",\"Total\":0}"},
+                    {"type": "text", "text": prompt_text},
                     {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
                 ]
             }],
             "max_tokens": 512,
             "temperature": 0.1
         }
+
         try:
             response = requests.post(API_URL, headers=headers, json=data, timeout=45)
             if response.status_code == 200:
                 status_placeholder.empty()
                 content = response.json()['choices'][0]['message']['content']
+                # 清洗返回的 Markdown 格式
                 clean = content.replace("```json", "").replace("```", "").strip()
                 s = clean.find('{')
                 e = clean.rfind('}') + 1
                 return json.loads(clean[s:e]) if s != -1 else json.loads(clean)
-        except: continue
+        except:
+            continue
+            
     return None
 
 # --- 页面主逻辑 ---
@@ -102,6 +119,8 @@ uploaded_files = st.file_uploader("请上传发票", type=['png', 'jpg', 'jpeg',
 
 if uploaded_files:
     st.divider()
+    
+    # 筛选新文件
     new_files = [f for f in uploaded_files if f"{f.name}_{f.size}" not in st.session_state.invoice_cache and f"{f.name}_{f.size}" not in st.session_state.ignored_files]
     
     if new_files:
@@ -109,9 +128,12 @@ if uploaded_files:
         st.info(f"检测到 {len(new_files)} 张新发票，准备识别...")
     
     current_data_list = []
+    
     for index, file in enumerate(uploaded_files):
         file_id = f"{file.name}_{file.size}"
-        if file_id in st.session_state.ignored_files: continue
+        
+        if file_id in st.session_state.ignored_files:
+            continue
 
         if file_id in st.session_state.invoice_cache:
             result = st.session_state.invoice_cache[file_id]
@@ -120,43 +142,82 @@ if uploaded_files:
                 file_bytes = file.read()
                 process_bytes = file_bytes
                 mime_type = file.type
+                
+                # PDF 转图片逻辑
                 if file.type == "application/pdf":
                     images = convert_from_bytes(file_bytes)
                     if images:
                         buf = io.BytesIO()
                         images[0].save(buf, format="JPEG")
-                        process_bytes, mime_type = buf.getvalue(), "image/jpeg"
+                        process_bytes = buf.getvalue()
+                        mime_type = "image/jpeg"
                 if mime_type == 'image/jpg': mime_type = 'image/jpeg'
+
                 result = analyze_image_auto_switch(process_bytes, mime_type)
-                if result: st.session_state.invoice_cache[file_id] = result
+                
+                if result:
+                    st.session_state.invoice_cache[file_id] = result
+                
                 if file in new_files:
                     progress_bar.progress((new_files.index(file) + 1) / len(new_files))
-            except: result = None
+
+            except Exception as e:
+                result = None
 
         if result:
-            amt = float(str(result.get('Total', 0)).replace(',','').replace('元',''))
-            current_data_list.append({"文件名": file.name, "日期": result.get('Date', ''), "项目": result.get('Item', ''), "金额": amt, "file_id": file_id})
+            try:
+                # 清洗金额中的符号
+                raw_amt = str(result.get('Total', 0)).replace('¥','').replace(',','').replace('元','')
+                amt = float(raw_amt)
+            except:
+                amt = 0.0
+            
+            current_data_list.append({
+                "文件名": file.name,
+                "日期": result.get('Date', ''),
+                "项目": result.get('Item', ''),
+                "金额": amt,
+                "file_id": file_id
+            })
 
+    # === 表格与交互区域 ===
     if current_data_list:
         df = pd.DataFrame(current_data_list)
+        
+        # 可编辑表格
         edited_df = st.data_editor(
             df, 
-            column_config={"file_id": None, "金额": st.column_config.NumberColumn(format="%.2f"), "文件名": st.column_config.TextColumn(disabled=True)},
-            num_rows="dynamic", use_container_width=True, key="invoice_editor"
+            column_config={
+                "file_id": None, 
+                "金额": st.column_config.NumberColumn(format="%.2f"), 
+                "文件名": st.column_config.TextColumn(disabled=True)
+            },
+            num_rows="dynamic", 
+            use_container_width=True, 
+            key="invoice_editor"
         )
         
-        # 同步更新与删除
+        # 同步逻辑：处理删除和修改
         if len(edited_df) != len(df):
-            st.session_state.ignored_files.update(set(df["file_id"]) - set(edited_df["file_id"]))
+            deleted_ids = set(df["file_id"]) - set(edited_df["file_id"])
+            st.session_state.ignored_files.update(deleted_ids)
             st.rerun()
+
+        for index, row in edited_df.iterrows():
+            fid = row['file_id']
+            if fid in st.session_state.invoice_cache:
+                st.session_state.invoice_cache[fid]['Total'] = row['金额']
 
         # --- 🟢 居中同行展示区 ---
         total = edited_df['金额'].sum()
         
-        # 布局：[留白, 内容, 留白]
+        # 布局：[留白 2.5份] [内容 5份] [留白 2.5份]
         col_side1, col_center, col_side2 = st.columns([2.5, 5, 2.5])
+        
         with col_center:
+            # 再分左右两列实现紧凑对齐
             inner_left, inner_right = st.columns([1.5, 1])
+            
             with inner_left:
                 st.markdown(f"""
                     <div style="display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; height: 100%;">
@@ -164,10 +225,17 @@ if uploaded_files:
                         <span class="total-val">¥ {total:,.2f}</span>
                     </div>
                 """, unsafe_allow_html=True)
+            
             with inner_right:
                 output = io.BytesIO()
                 df_export = edited_df.drop(columns=["file_id"])
                 df_export.loc[len(df_export)] = ['合计', '', '', total]
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_export.to_excel(writer, index=False)
-                st.download_button(label="导出 excel", data=output.getvalue(), file_name="发票汇总.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                
+                st.download_button(
+                    label="导出 excel", 
+                    data=output.getvalue(), 
+                    file_name="发票汇总.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
