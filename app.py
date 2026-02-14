@@ -172,12 +172,14 @@ if uploaded_files:
         """, unsafe_allow_html=True)
     render_dashboard(success_count, fail_count)
 
-    # === 3. 处理循环 ===
+    # === 3. 批量处理循环 (修复版) ===
     if queue_to_process:
-        st.write("---")
+        st.write("---") 
         progress_bar = st.progress(0)
         status_text = st.empty()
-        log_area = st.empty()
+        log_area = st.empty() 
+        
+        total_q = len(queue_to_process)
         
         for i, file in enumerate(queue_to_process):
             fid = f"{file.name}_{file.size}"
@@ -185,17 +187,17 @@ if uploaded_files:
             
             # 使用自定义文件名（如果有）或原始名
             display_name = st.session_state.renamed_files.get(fid, file.name)
-            status_text.markdown(f"<div class='processing-highlight'> 正在处理：{display_name} ({i+1}/{len(queue_to_process)})</div>", unsafe_allow_html=True)
+            status_text.markdown(f"<div class='processing-highlight'> 正在处理：{display_name} ({i+1}/{total_q})</div>", unsafe_allow_html=True)
+            
+            error_msg = None # 用于记录具体错误
             
             try:
-                # 文件预处理
                 file.seek(0)
                 f_bytes = file.read()
                 m_type = file.type
                 
-                # PDF 转图片
                 if m_type == "application/pdf":
-                    log_area.caption(" PDF 转图片中...")
+                    log_area.caption(f" 正在解析 PDF: {display_name}...")
                     images = convert_from_bytes(f_bytes)
                     if images:
                         buf = io.BytesIO()
@@ -209,22 +211,29 @@ if uploaded_files:
                 if result:
                     st.session_state.invoice_cache[fid] = {'status': 'success', 'data': result}
                     success_count += 1
-                    log_area.success(f" {display_name} 识别成功")
+                    log_area.success(f" ✅ {display_name} 识别成功")
                 else:
-                    st.session_state.invoice_cache[fid] = {'status': 'failed'}
+                    error_msg = "API返回空或重试耗尽"
+                    st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': error_msg}
                     fail_count += 1
             
             except Exception as e:
-                st.session_state.invoice_cache[fid] = {'status': 'failed'}
+                error_msg = str(e)
+                st.session_state.invoice_cache[fid] = {'status': 'failed', 'error': error_msg}
                 fail_count += 1
+                log_area.error(f" ❌ {display_name} 发生异常: {e}")
 
             render_dashboard(success_count, fail_count)
-            progress_bar.progress((i + 1) / len(queue_to_process))
-            time.sleep(0.1)
+            progress_bar.progress((i + 1) / total_q)
+            
+            # 【关键修复】主动降速，防止触发 QPS 限制导致最后一张失败
+            time.sleep(1.5) 
 
-        status_text.empty()
-        log_area.empty()
-        progress_bar.empty()
+        # 【关键修复】不要立即清空日志，让用户能看到最后一张为什么失败
+        # log_area.empty() 
+        # status_text.empty()
+        
+        time.sleep(1) # 再多等一秒让用户看清结果
         st.rerun()
 
     # === 4. 数据准备 (核心修复：支持改名和回显) ===
@@ -252,9 +261,13 @@ if uploaded_files:
                     "file_id": fid
                 })
             elif cache['status'] == 'failed':
+                # 获取具体的错误信息
+                err = cache.get('error', '未知错误')
                 table_data.append({
                     "文件名": display_name, 
-                    "日期": "-", "项目": "-", "金额": 0.0, 
+                    "日期": "识别失败", 
+                    "项目": f"❌ {err}", # 这里会显示具体的报错原因
+                    "金额": 0.0, 
                     "状态": " 失败", 
                     "file_id": fid
                 })
