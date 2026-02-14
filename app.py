@@ -12,7 +12,7 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 根据截图 image_13406a.png 修正的模型列表
+# 根据截图 image_13406a.png 锁定模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -20,25 +20,12 @@ CANDIDATE_MODELS = [
     "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
 ]
 
-# --- 2. 页面设置与样式美化 ---
+# --- 2. 页面设置与 CSS 样式 ---
 st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide")
 
 st.markdown("""
     <style>
-    /* 1. 精致型下载按钮：宽度自适应文案 */
-    div.stDownloadButton > button {
-        background-color: #007bff !important; 
-        color: white !important; 
-        border: none !important; 
-        border-radius: 6px !important;
-        width: auto !important;
-        padding: 0.4rem 1.2rem !important;
-        font-size: 0.95rem !important;
-        transition: all 0.3s ease;
-    }
-    div.stDownloadButton > button:hover { background-color: #0056b3 !important; transform: translateY(-1px); }
-    
-    /* 2. 顶部统计看板 */
+    /* 1. 顶部统计看板 */
     .dashboard-box {
         padding: 15px; border-radius: 10px; background-color: #f8f9fa; border: 1px solid #e9ecef;
         margin-bottom: 20px; display: flex; gap: 20px; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -48,30 +35,49 @@ st.markdown("""
     .stat-fail { color: #dc3545; }
     .stat-time { color: #007bff; }
     
-    /* 3. 底部合计区域：加粗、放大并水平居中 */
-    .footer-flex-container {
+    /* 2. 底部合计栏：核心 Flex 布局，确保单行且居中 */
+    .footer-wrapper {
         display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 30px;
-        margin-top: 35px;
-        padding: 25px 0;
+        justify-content: center; /* 水平居中 */
+        align-items: center;     /* 垂直方向对齐 */
+        gap: 20px;               /* 文字与按钮的间距 */
+        margin-top: 40px;
+        padding-bottom: 40px;
+        width: 100%;
     }
-    .total-highlight {
-        font-size: 2.6rem;
-        font-weight: 800;
+    .total-display {
+        font-size: 2.8rem;       /* 金额放大 */
+        font-weight: 800;        /* 极致加粗 */
         color: #1a1d21;
-        letter-spacing: -1px;
-        margin: 0;
         display: flex;
-        align-items: baseline;
+        align-items: baseline;   /* 确保“合计”和金额基准线对齐 */
     }
-    .total-label-small {
+    .total-label {
         font-size: 1.5rem;
         font-weight: 600;
-        margin-right: 12px;
+        margin-right: 15px;
         color: #495057;
     }
+    
+    /* 3. 蓝色按钮：自适应宽度且外观精致 */
+    div.stDownloadButton {
+        display: inline-block;
+        line-height: 1;
+    }
+    div.stDownloadButton > button {
+        background-color: #007bff !important; 
+        color: white !important; 
+        border: none !important; 
+        border-radius: 6px !important;
+        width: auto !important; /* 宽度自适应 */
+        padding: 0.4rem 1.2rem !important;
+        font-size: 0.95rem !important;
+        font-weight: 500 !important;
+        height: auto !important;
+        transition: all 0.3s ease;
+    }
+    div.stDownloadButton > button:hover { background-color: #0056b3 !important; transform: translateY(-1px); }
+    
     .processing-highlight { color: #007bff; font-weight: bold; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
@@ -97,7 +103,7 @@ def call_api_once(image_bytes, mime_type, log_placeholder):
 
     last_error = ""
     for model in CANDIDATE_MODELS:
-        if log_placeholder: log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp; 正在连接模型 `{model}`...")
+        if log_placeholder: log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp; 正在尝试模型 `{model}`...")
         data = {
             "model": model,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}]}],
@@ -167,7 +173,6 @@ if uploaded_files:
             st.session_state.processed_session_ids.add(fid)
             d_name = st.session_state.renamed_files.get(fid, file.name)
             status_txt.markdown(f"<div class='processing-highlight'>正在处理 ({i+1}/{len(queue)}): {d_name}</div>", unsafe_allow_html=True)
-            
             try:
                 file.seek(0)
                 f_bytes = file.read()
@@ -196,7 +201,7 @@ if uploaded_files:
         st.session_state.overall_duration = time.time() - task_start_time
         st.rerun()
 
-    # 表格数据准备
+    # 表格数据
     table_data = []
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
@@ -212,7 +217,6 @@ if uploaded_files:
                 table_data.append({"文件名": name, "日期": "失败", "项目": f"❌ {cache.get('error','识别超时')}", "金额": 0.0, "状态": "失败", "file_id": fid})
 
     st.session_state.current_table_data = table_data
-    
     if table_data:
         st.divider()
         failed_count = sum(1 for r in table_data if r['状态'] == '失败')
@@ -220,12 +224,12 @@ if uploaded_files:
             c1, c2 = st.columns([8, 2])
             with c1: st.warning(f"当前有 {failed_count} 个发票识别失败。")
             with c2:
-                if st.button("🔄 重试所有未完成任务", type="primary", use_container_width=True):
+                if st.button("🔄 重试失败任务", type="primary", use_container_width=True):
                     for r in table_data:
-                        if r['状态'] == '失败':
-                            st.session_state.processed_session_ids.discard(r['file_id'])
+                        if r['状态'] == '失败': st.session_state.processed_session_ids.discard(r['file_id'])
                     st.rerun()
 
+        # 表格显示
         df = pd.DataFrame(table_data)
         edited = st.data_editor(
             df,
@@ -237,28 +241,35 @@ if uploaded_files:
             use_container_width=True, key="invoice_editor", on_change=on_table_change
         )
         
-        # --- 6. 底部合计与导出 (UI 精修区) ---
+        # === 6. 底部合计与按钮优化区 ===
         total_amt = sum(r['金额'] for r in table_data if r['状态'] == '成功')
         
-        st.write('<div class="footer-flex-container">', unsafe_allow_html=True)
-        st.markdown(f'''
-            <div class="total-highlight">
-                <span class="total-label-small">合计</span>
-                <span>{total_amt:,.2f}</span>
-            </div>
-        ''', unsafe_allow_html=True)
-        
+        # 准备导出数据
         out = io.BytesIO()
-        exp_df = pd.DataFrame(table_data).drop(columns=['file_id'])
+        exp_df = df.drop(columns=['file_id'])
         exp_df.loc[len(exp_df)] = ['合计', '', '', total_amt, '']
         with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
+
+        # 核心布局：HTML 文字 + 按钮在同一个 Flex 容器内
+        footer_html = f'''
+            <div class="footer-wrapper">
+                <div class="total-display">
+                    <span class="total-label">合计</span>
+                    <span>{total_amt:,.2f}</span>
+                </div>
+        '''
+        st.markdown(footer_html, unsafe_allow_html=True)
         
-        st.download_button(
-            label="导出 Excel", 
-            data=out.getvalue(), 
-            file_name="发票汇总.xlsx", 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        st.write('</div>', unsafe_allow_html=True)
+        # 在 Flex 容器内放置下载按钮（由于 Streamlit 限制，我们用 columns 实现精确对齐）
+        col_left, col_center, col_right = st.columns([2, 5, 2])
+        with col_center:
+            # 使用一个嵌套列来让文本和按钮真正靠拢并居中
+            c1, c2 = st.columns([0.65, 0.35], vertical_alignment="center")
+            with c1:
+                st.markdown(f'<div class="total-display" style="justify-content: flex-end;"><span class="total-label">合计</span>{total_amt:,.2f}</div>', unsafe_allow_html=True)
+            with c2:
+                st.download_button("导出 Excel", out.getvalue(), "发票汇总.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.info("👆 请上传发票文件。系统将自动统计整体处理时长并汇总金额。")
+    st.info("👆 请上传发票文件。")
