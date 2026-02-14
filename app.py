@@ -12,6 +12,7 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+# 根据截图修正的模型列表
 CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-VL-72B-Instruct", 
     "deepseek-ai/DeepSeek-OCR",
@@ -57,7 +58,7 @@ st.markdown("""
         color: #495057;
     }
     
-    /* 蓝色按钮样式 */
+    /* 蓝色按钮样式：自适应宽度 + 底部对齐 */
     div.stDownloadButton > button {
         background-color: #007bff !important; 
         color: white !important; 
@@ -79,7 +80,6 @@ st.markdown("""
 if 'invoice_cache' not in st.session_state: st.session_state.invoice_cache = {}
 if 'processed_session_ids' not in st.session_state: st.session_state.processed_session_ids = set()
 if 'renamed_files' not in st.session_state: st.session_state.renamed_files = {} 
-# 新增：事项内容的缓存
 if 'descriptions' not in st.session_state: st.session_state.descriptions = {} 
 if 'overall_duration' not in st.session_state: st.session_state.overall_duration = 0.0
 
@@ -128,7 +128,7 @@ def on_table_change():
             # 1. 监听文件名修改
             if "文件名" in changes:
                 st.session_state.renamed_files[fid] = changes["文件名"]
-            # 2. 监听事项修改 (新功能)
+            # 2. 监听事项修改
             if "事项" in changes:
                 st.session_state.descriptions[fid] = changes["事项"]
             # 3. 监听金额修改
@@ -204,17 +204,15 @@ if uploaded_files:
     # === 构建数据表格 ===
     table_data = []
     
-    # [新功能] 全局报销人输入框
+    # 全局报销人输入框
     st.markdown("##### 📝 填写报销信息")
     c_input, _ = st.columns([1, 3])
     with c_input:
-        # 默认值为空，用户输入后会自动更新所有行的“报销人”列
         reimburser_name = st.text_input("报销人姓名 (统一填写)", placeholder="请输入名字", help="此处输入后将自动填充表格第一列")
 
     for f in uploaded_files:
         fid = f"{f.name}_{f.size}"
         name = st.session_state.renamed_files.get(fid, f.name)
-        # 获取用户之前填写的事项，默认为空
         desc = st.session_state.descriptions.get(fid, "")
         
         cache = st.session_state.invoice_cache.get(fid)
@@ -223,15 +221,14 @@ if uploaded_files:
                 d = cache['data']
                 try: amt = float(str(d.get('Total', 0)).replace(',','').replace('元',''))
                 except: amt = 0.0
-                # 构造行数据，注意顺序
                 table_data.append({
-                    "报销人": reimburser_name,  # 第1列
-                    "文件名": name,            # 第2列
-                    "日期": d.get('Date',''),   # 第3列
-                    "项目": d.get('Item',''),   # 第4列
-                    "事项": desc,               # 第5列 (新)
-                    "金额": amt,                # 第6列
-                    "状态": "成功",             # 第7列
+                    "报销人": reimburser_name,
+                    "文件名": name,
+                    "日期": d.get('Date',''),
+                    "项目": d.get('Item',''),
+                    "事项": desc,
+                    "金额": amt,
+                    "状态": "成功",
                     "file_id": fid
                 })
             elif cache['status'] == 'failed':
@@ -266,15 +263,11 @@ if uploaded_files:
             "file_id": None, 
             "金额": st.column_config.NumberColumn(format="%.2f"),
             "状态": st.column_config.TextColumn(disabled=True),
-            # 报销人设为只读，因为由上方输入框统一控制，避免歧义
             "报销人": st.column_config.TextColumn(disabled=True, width="medium"), 
             "文件名": st.column_config.TextColumn(disabled=False),
-            # 事项列设为可编辑
             "事项": st.column_config.TextColumn(disabled=False, width="large", help="请在此处补充具体事项说明")
         }
         
-        # 渲染表格，注意 DataFrame 的列顺序已经通过 append 字典的顺序决定了
-        # 但为了保险，我们可以显式指定列顺序
         cols_order = ["报销人", "文件名", "日期", "项目", "事项", "金额", "状态", "file_id"]
         df = df[cols_order]
         
@@ -289,16 +282,19 @@ if uploaded_files:
         # === 底部合计与按钮区域 ===
         total_amt = df[df['状态'] == "成功"]['金额'].sum()
         out = io.BytesIO()
-        exp_df = df.drop(columns=['file_id'])
-        # 合计行只在“项目”列写合计，在“金额”列写数字
+        
+        # 【关键修改】 导出 Excel 时剔除 "状态" 和 "file_id"
+        exp_df = df.drop(columns=['file_id', '状态'])
+        
+        # 动态计算合计行位置
         total_row = [''] * len(exp_df.columns)
-        # 找到列的索引位置
         idx_item = exp_df.columns.get_loc("项目")
         idx_amt = exp_df.columns.get_loc("金额")
         total_row[idx_item] = '合计'
         total_row[idx_amt] = total_amt
         
         exp_df.loc[len(exp_df)] = total_row
+        
         with pd.ExcelWriter(out, engine='openpyxl') as writer: exp_df.to_excel(writer, index=False)
 
         col_left, col_center, col_right = st.columns([2, 5, 2])
