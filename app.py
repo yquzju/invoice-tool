@@ -12,8 +12,12 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 仅保留有效模型，确保模型路径正确
-CANDIDATE_MODELS = ["Qwen/Qwen2-VL-72B-Instruct", "Qwen/Qwen2-VL-7B-Instruct"]
+# 更新为硅基流动当前最稳定的多模态模型列表
+CANDIDATE_MODELS = [
+    "Qwen/Qwen2-VL-72B-Instruct", 
+    "OpenGVLab/InternVL2-26B",
+    "OpenGVLab/InternVL2-8B"
+]
 
 # --- 2. 页面设置 ---
 st.set_page_config(page_title="AI 发票助手(QwenVL可编辑版)", layout="wide")
@@ -50,7 +54,7 @@ def call_api_once(image_bytes, mime_type, log_placeholder):
 
     last_error = ""
     for model in CANDIDATE_MODELS:
-        if log_placeholder: log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp; 正在连接模型 `{model}`...")
+        if log_placeholder: log_placeholder.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp; 正在尝试模型 `{model}`...")
         data = {
             "model": model,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}]}],
@@ -136,7 +140,7 @@ if uploaded_files:
             
             render_live_stats()
             prog.progress((i + 1) / len(queue))
-            time.sleep(1.0)
+            time.sleep(1.2)
         
         status_txt.empty()
         prog.empty()
