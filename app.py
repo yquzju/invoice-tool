@@ -12,11 +12,13 @@ import time
 # --- 1. 配置区域 ---
 API_KEY = "sk-epvburmeracnfubnwswnzspuylzuajtoncrdsejqefjlrmtw"
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
-# 更新为硅基流动当前最稳定的多模态模型列表
+
+# 更新为硅基流动目前稳定提供的多模态模型列表
+# 如果仍有模型不存在，请在硅基流动模型广场核对 ID
 CANDIDATE_MODELS = [
     "Qwen/Qwen2-VL-72B-Instruct", 
-    "OpenGVLab/InternVL2-26B",
-    "OpenGVLab/InternVL2-8B"
+    "Qwen/Qwen2-VL-7B-Instruct",
+    "THUDM/glm-4v-9b"
 ]
 
 # --- 2. 页面设置 ---
@@ -42,8 +44,10 @@ if 'renamed_files' not in st.session_state: st.session_state.renamed_files = {}
 
 if 'http_session' not in st.session_state:
     session = requests.Session()
+    # 增加自动重试逻辑，应对 502/503/504 等网络波动
     retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-    session.mount('https://', HTTPAdapter(max_retries=retries))
+    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retries)
+    session.mount('https://', adapter)
     st.session_state.http_session = session
 
 # --- 4. 核心功能函数 ---
@@ -123,7 +127,6 @@ if uploaded_files:
                 f_bytes = file.read()
                 m_type = file.type
                 if m_type == "application/pdf":
-                    log_area.caption("📄 PDF 转图片中...")
                     images = convert_from_bytes(f_bytes)
                     if images:
                         buf = io.BytesIO()
@@ -140,7 +143,8 @@ if uploaded_files:
             
             render_live_stats()
             prog.progress((i + 1) / len(queue))
-            time.sleep(1.2)
+            # 增加一点处理间隔，保护最后一张请求不被 API 拦截
+            time.sleep(1.5)
         
         status_txt.empty()
         prog.empty()
